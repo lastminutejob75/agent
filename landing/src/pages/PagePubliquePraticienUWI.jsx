@@ -1161,7 +1161,6 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
   const [lookupPhone, setLookupPhone] = useState("");
   const [lookupEmail, setLookupEmail] = useState("");
   const [lookupCode, setLookupCode] = useState(() => String(initialBookingCode || "").trim().toUpperCase());
-  const autoLookupStarted = useRef(false);
   const [verifyPhone, setVerifyPhone] = useState("");
   const [verifyEmail, setVerifyEmail] = useState("");
   const [appointments, setAppointments] = useState([]);
@@ -1221,7 +1220,6 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
   useEffect(() => {
     const code = String(initialBookingCode || "").trim().toUpperCase();
     if (code) setLookupCode(code);
-    autoLookupStarted.current = false;
   }, [initialBookingCode, mode]);
 
   const runLookup = async (overrides = {}) => {
@@ -1229,8 +1227,8 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
     const phone = String(overrides.phone ?? lookupPhone).trim();
     const email = String(overrides.email ?? lookupEmail).trim();
     const bookingCode = String(overrides.bookingCode ?? lookupCode).trim();
-    if (!phone && !email && !bookingCode) {
-      setError("Renseignez votre telephone, email ou code rendez-vous.");
+    if (!phone || !bookingCode) {
+      setError("Indiquez votre telephone ET votre code rendez-vous (ex. RDV-A7K3M2). Sans code, demandez a etre rappele.");
       return;
     }
     setLoading(true);
@@ -1279,13 +1277,9 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
     }
   };
 
-  useEffect(() => {
-    const code = String(initialBookingCode || "").trim();
-    if (!code || mode === "callback" || autoLookupStarted.current) return;
-    autoLookupStarted.current = true;
-    void runLookup({ bookingCode: code, phone: "", email: "" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- lookup initial une fois a l'ouverture
-  }, [initialBookingCode, mode, slug]);
+  // Le code seul ne suffit plus (securite: telephone + code requis). On pre-remplit
+  // le code depuis le lien (fait dans l'effet ci-dessus) et on laisse le patient
+  // saisir son telephone, sans lancer la recherche automatiquement.
 
   const loadRescheduleSlots = async () => {
     let loaded = [];
@@ -1489,13 +1483,19 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
         <div className="modalBody">
           {step === "identify" ? (
             <>
-              <p className="actionModalHint">Renseignez votre telephone, email ou code rendez-vous (ex. RDV-A7K3M2).</p>
+              <p className="actionModalHint">Pour des raisons de securite, indiquez votre telephone ET votre code rendez-vous (ex. RDV-A7K3M2) recu lors de la prise de rendez-vous.</p>
               <input value={lookupPhone} onChange={(e) => setLookupPhone(e.target.value)} placeholder="Telephone" type="tel" />
-              <input value={lookupEmail} onChange={(e) => setLookupEmail(e.target.value)} placeholder="Email (facultatif)" type="email" />
-              <input value={lookupCode} onChange={(e) => setLookupCode(e.target.value.toUpperCase())} placeholder="Code rendez-vous (facultatif)" />
+              <input value={lookupCode} onChange={(e) => setLookupCode(e.target.value.toUpperCase())} placeholder="Code rendez-vous (ex. RDV-A7K3M2)" />
               {error ? <p className="fieldError">{error}</p> : null}
               <button className="primary" type="button" disabled={loading} onClick={() => void runLookup()}>
                 {loading ? "Recherche…" : "Retrouver mon rendez-vous"}
+              </button>
+              <button
+                type="button"
+                className="actionSecondaryLink"
+                onClick={() => { setError(""); setStep("callback_identify"); }}
+              >
+                Je n&apos;ai pas mon code — etre rappele(e)
               </button>
             </>
           ) : null}
@@ -3315,6 +3315,7 @@ header a.wa{color:#1b6d34;border-color:#cce9d2}
 .chatHeroPostBooking .chatScroll{opacity:.92}
 .chatSlotBtn:disabled{opacity:.45;cursor:not-allowed}
 .actionModalHint{margin:0;font-size:13px;color:#5f7375;line-height:1.45}
+.actionSecondaryLink{border:0;background:transparent;color:#187683;font-size:12px;font-weight:700;text-decoration:underline;cursor:pointer;padding:4px 0;align-self:center}
 .actionApptPick{display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:100%;text-align:left;border:1px solid #d6eeee;background:#f8fbfb;border-radius:12px;padding:12px 14px;color:#1f3138}
 .actionApptPick strong{font-size:14px;color:#0a4a50}.actionApptPick span{font-size:12px;color:#60757b}
 .actionApptPick:hover{border-color:#009CA4;background:#eefafa}

@@ -244,21 +244,31 @@ def lookup_appointments(
     code = normalize_booking_code(booking_code) if booking_code else ""
     phone_val = (phone or "").strip()
     email_val = (email or "").strip()
-    if not code and not phone_val and not email_val:
-        raise HTTPException(422, "Renseignez votre telephone, email ou code rendez-vous.")
+    # Sécurité (double facteur): l'identification self-service exige le code RDV
+    # ET le téléphone. Le téléphone seul n'est pas un secret (connu de l'entourage,
+    # devinable), donc il ne suffit pas à retrouver/annuler un RDV. Sans code, le
+    # patient est orienté vers la demande de rappel côté UI.
+    if not code or not phone_val:
+        raise HTTPException(
+            422,
+            "Pour des raisons de sécurité, indiquez votre téléphone ET votre code "
+            "rendez-vous (ex. RDV-A7K3M2). Sans code, demandez à être rappelé(e).",
+        )
 
-    public_rows = lookup_public_bookings(
-        tenant_id,
-        booking_code=code or None,
-        phone=phone_val or None,
-        email=email_val or None,
-    )
-    internal_rows = _lookup_internal_appointments(
-        tenant_id,
-        booking_code=code or None,
-        phone=phone_val or None,
-        email=email_val or None,
-    )
+    # On identifie le RDV par le code (identifiant unique), puis on vérifie que le
+    # téléphone fourni correspond bien au même RDV (second facteur).
+    public_rows = lookup_public_bookings(tenant_id, booking_code=code or None)
+    internal_rows = _lookup_internal_appointments(tenant_id, booking_code=code or None)
+
+    public_rows = [
+        r for r in public_rows if _contact_phone_matches(r.get("patient_phone"), phone_val)
+    ]
+    internal_rows = [
+        r
+        for r in internal_rows
+        if (r.get("contact_type") or "").strip().lower() == "phone"
+        and _contact_phone_matches(r.get("contact"), phone_val)
+    ]
 
     seen_codes: set[str] = set()
     appointments: List[Dict[str, Any]] = []
