@@ -272,11 +272,18 @@ def _compose_message(name: str, when_str: str, cabinet: str, motif: str) -> str:
     )
 
 
-def run_appointment_reminders_job(dry_run: bool = False, only_tenant_id: Optional[int] = None) -> Dict[str, Any]:
+def run_appointment_reminders_job(
+    dry_run: bool = False,
+    only_tenant_id: Optional[int] = None,
+    only_phone: Optional[str] = None,
+    horizon_hours: Optional[float] = None,
+) -> Dict[str, Any]:
     """Job horaire : envoie les rappels SMS pour les RDV ~24h à l'avance.
 
     dry_run=True : n'envoie rien, ne marque rien — retourne la liste de ce qui
     SERAIT envoyé (numéro masqué). only_tenant_id : restreint à un tenant (test).
+    only_phone : n'envoie qu'à ce numéro (filtre de sécurité pour un test réel).
+    horizon_hours : si fourni, fenêtre = [now, now+horizon] au lieu de [now+24h, now+25h).
     """
     if not reminders_enabled():
         return {"disabled": True}
@@ -302,8 +309,14 @@ def run_appointment_reminders_job(dry_run: bool = False, only_tenant_id: Optiona
     ensure_reminders_schema()
 
     now = datetime.now(timezone.utc)
-    ws = now + timedelta(hours=24)
-    we = now + timedelta(hours=25)
+    if horizon_hours is not None:
+        ws = now
+        we = now + timedelta(hours=float(horizon_hours))
+    else:
+        ws = now + timedelta(hours=24)
+        we = now + timedelta(hours=25)
+
+    target_phone = _extract_phone(only_phone) if only_phone else ""
 
     sent = 0
     failed = 0
@@ -325,6 +338,9 @@ def run_appointment_reminders_job(dry_run: bool = False, only_tenant_id: Optiona
                 for item in due:
                     phone = _extract_phone(item.get("phone") or "")
                     if not phone:
+                        skipped += 1
+                        continue
+                    if target_phone and phone != target_phone:
                         skipped += 1
                         continue
                     # Anti-doublon intra-run (un même RDV mirroré sur 2 sources)
