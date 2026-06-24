@@ -2517,6 +2517,26 @@ export default function PagePubliquePraticienUWI() {
             gotFinalReply = true;
           }
         }
+        // Le POST renvoie désormais la réponse du moteur (reply) directement :
+        // on remplace le placeholder « Je cherche… » sans attendre le SSE, qui peut
+        // ne jamais arriver derrière le proxy (cause des blocages "recherche de créneaux").
+        if (!gotFinalReply && isSlotsLookup && !isMoreSlotsLookup) {
+          const directText = String(response?.reply || "").trim();
+          if (directText) {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
+              const nextMsg = { id: msgId.current++, from: "clara", text: directText };
+              if (last?.from === "clara" && (isSlotsLookupPlaceholder(lastText) || last?.provisional)) {
+                return prev.slice(0, -1).concat([nextMsg]);
+              }
+              if (last?.from === "clara" && lastText === directText) return prev;
+              return prev.concat([nextMsg]);
+            });
+            gotFinalReply = true;
+            resolvePendingTurn();
+          }
+        }
         if (!instantText && response?.reply) {
           applyChatResponse(response);
           gotFinalReply = true;

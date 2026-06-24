@@ -189,14 +189,19 @@ async def emit_event(conv_id: str, ev: Event, session: Any = None) -> None:
     await push_event(conv_id, payload)
 
 
-async def run_engine(conv_id: str, message: str, channel: str = "web") -> None:
-    """Exécute engine.handle_message et push SSE events (sérialisé par conversation)."""
+async def run_engine(conv_id: str, message: str, channel: str = "web") -> Dict[str, Any]:
+    """
+    Exécute engine.handle_message et push SSE events (sérialisé par conversation).
+    Retourne aussi la réponse finale capturée (reply/slots/conv_state) pour permettre
+    une réponse HTTP directe sans dépendre de la livraison SSE (plus fiable).
+    """
     lock = _ENGINE_LOCKS.setdefault(conv_id, asyncio.Lock())
     async with lock:
-        await _run_engine_locked(conv_id, message, channel)
+        return await _run_engine_locked(conv_id, message, channel)
 
 
-async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -> None:
+async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -> Dict[str, Any]:
+    captured: Dict[str, Any] = {"reply": "", "slots": [], "conv_state": None}
     try:
         session = ENGINE.session_store.get_or_create(conv_id)
         session.channel = channel
@@ -222,7 +227,9 @@ async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -
                     conv_id,
                     {"type": "final", "text": msg, "conv_state": "START", "timestamp": now_iso()},
                 )
-                return
+                captured["reply"] = msg
+                captured["conv_state"] = "START"
+                return captured
 
         # Pas de partial « … » sur le web : évite « Je réfléchis » pendant les requêtes PG
         if channel != "web":
@@ -235,6 +242,16 @@ async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -
         session = ENGINE.session_store.get(conv_id)
         for ev in events:
             await emit_event(conv_id, ev, session)
+            if getattr(ev, "type", None) in ("final", "transfer") and (getattr(ev, "text", None) or "").strip():
+                captured["reply"] = ev.text
+                captured["conv_state"] = getattr(ev, "conv_state", None)
+
+        # Créneaux proposés (mêmes données que celles attachées au SSE) pour
+        # une réponse HTTP directe, indépendante de la livraison SSE.
+        if session is not None:
+            slots = _slots_ui_payload(session)
+            if slots:
+                captured["slots"] = slots
 
         if not events or not any(
             getattr(ev, "type", None) == "final" and (getattr(ev, "text", None) or "").strip() for ev in events
@@ -248,6 +265,9 @@ async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -
                 getattr(prompts, "MSG_SAFE_DEFAULT_MENU_1_WEB", prompts.MSG_UNCLEAR_1),
             )
             await emit_event(conv_id, Evt("final", fallback, conv_state="START"), session)
+            if not captured["reply"]:
+                captured["reply"] = fallback
+                captured["conv_state"] = "START"
 
     except Exception:
         logger.exception("run_engine failed conv_id=%s", conv_id)
@@ -262,6 +282,10 @@ async def _run_engine_locked(conv_id: str, message: str, channel: str = "web") -
             conv_id,
             {"type": "final", "text": err_msg, "conv_state": "START", "timestamp": now_iso()},
         )
+        captured["reply"] = err_msg
+        captured["conv_state"] = "START"
+
+    return captured
 
 
 def _register_web_conv_tenant(tenant_id: int, conv_id: str) -> None:
@@ -396,6 +420,22 @@ async def start_web_chat(
     elif is_more_slots:
         # "Voir d'autres créneaux" doit forcer une nouvelle proposition, pas rejouer le cache instantané.
         asyncio.create_task(_warm_slots_cache(tid, booking_origin=booking_origin))
+
+    # Web : exécuter le moteur EN LIGNE et renvoyer reply/slots dans la réponse HTTP.
+    # La livraison SSE reste émise (compat widget), mais l'UI ne dépend plus d'elle
+    # pour afficher les créneaux — cause des blocages récurrents "recherche de créneaux".
+    if channel == "web" and msg:
+        captured = await run_engine(conv_id, msg, channel)
+        if captured.get("reply"):
+            out["reply"] = captured["reply"]
+        # Ne pas écraser des créneaux déjà fournis (cache booking_start) par une liste vide.
+        if captured.get("slots"):
+            out["slots"] = captured["slots"]
+            out["slots_source"] = "engine"
+        if captured.get("conv_state"):
+            out["conv_state"] = captured["conv_state"]
+        return out
+
     asyncio.create_task(run_engine(conv_id, msg, channel))
     return out
 
