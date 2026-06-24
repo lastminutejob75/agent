@@ -6394,7 +6394,10 @@ def _collect_patient_upcoming_appointment_slots(
                             "motif": motif,
                             "type": motif,
                             "source": source,
-                            "booking_origin": "google",
+                            # Lire l'origine métier depuis la balise [uwi-origin:...]
+                            # de la description Google (praticien / public_page / voice).
+                            # "google" est la source calendrier, pas une origine métier.
+                            "booking_origin": _agenda_resolve_booking_origin_google(description, None),
                             "done": end_local <= now_local,
                             "current": start_local <= now_local < end_local,
                             "event_id": event_id,
