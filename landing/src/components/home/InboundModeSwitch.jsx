@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { api } from "../../lib/api.js";
+
+function normalizeFrPhone(value) {
+  let s = String(value || "").replace(/[\s.\-()]/g, "");
+  if (s.startsWith("00")) s = "+" + s.slice(2);
+  if (/^0\d{9}$/.test(s)) s = "+33" + s.slice(1);
+  return s;
+}
+
+function isValidPhone(value) {
+  return /^\+\d{8,15}$/.test(value);
+}
 
 const T = {
   navy: "#071A33",
@@ -26,12 +36,13 @@ function prettyPhone(value) {
 }
 
 export default function InboundModeSwitch({ initialMode = "agent" }) {
-  const navigate = useNavigate();
   const [mode, setMode] = useState(initialMode === "practitioner" ? "practitioner" : "agent");
   const [forwardReady, setForwardReady] = useState(true);
   const [forwardNumber, setForwardNumber] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [phoneInput, setPhoneInput] = useState("");
+  const [savingPhone, setSavingPhone] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +78,27 @@ export default function InboundModeSwitch({ initialMode = "agent" }) {
       setSaving(false);
     }
   }, [practitioner, saving]);
+
+  const saveForwardNumber = useCallback(async () => {
+    if (savingPhone) return;
+    const normalized = normalizeFrPhone(phoneInput);
+    if (!isValidPhone(normalized)) {
+      setError("Numéro invalide. Exemple : 06 12 34 56 78");
+      return;
+    }
+    setSavingPhone(true);
+    setError("");
+    try {
+      await api.tenantPatchParams({ transfer_practitioner_phone: normalized });
+      setForwardNumber(normalized);
+      setForwardReady(true);
+      setPhoneInput("");
+    } catch (e) {
+      setError(e?.message || "Impossible d'enregistrer le numéro pour le moment.");
+    } finally {
+      setSavingPhone(false);
+    }
+  }, [phoneInput, savingPhone]);
 
   const wrap = {
     display: "flex",
@@ -112,13 +144,48 @@ export default function InboundModeSwitch({ initialMode = "agent" }) {
           </div>
           {error ? <div style={{ fontSize: 12, color: T.red, marginTop: 4 }}>{error}</div> : null}
           {!forwardReady && !practitioner ? (
-            <button
-              type="button"
-              onClick={() => navigate("/app/settings")}
-              style={{ marginTop: 4, fontSize: 12, color: T.tealDark, background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
-            >
-              Configurez un numéro de renvoi pour pouvoir reprendre les appels
-            </button>
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>
+                Indiquez le numéro qui sonnera quand vous reprenez les appels :
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <input
+                  type="tel"
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveForwardNumber(); }}
+                  placeholder="06 12 34 56 78"
+                  style={{
+                    flex: "1 1 180px",
+                    minWidth: 150,
+                    padding: "9px 11px",
+                    borderRadius: 9,
+                    border: `1.5px solid ${T.border}`,
+                    fontSize: 13.5,
+                    outline: "none",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={saveForwardNumber}
+                  disabled={savingPhone}
+                  style={{
+                    padding: "9px 16px",
+                    borderRadius: 9,
+                    border: "none",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#fff",
+                    background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`,
+                    cursor: savingPhone ? "not-allowed" : "pointer",
+                    opacity: savingPhone ? 0.6 : 1,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {savingPhone ? "..." : "Enregistrer"}
+                </button>
+              </div>
+            </div>
           ) : null}
         </div>
       </div>
