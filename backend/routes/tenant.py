@@ -8099,8 +8099,10 @@ def tenant_patch_params(
 def tenant_get_inbound_mode(auth: dict = Depends(require_tenant_auth)):
     """État courant de la réception des appels (agent vocal vs ligne praticien)."""
     from backend.inbound_mode import get_inbound_mode, resolve_inbound_forward_number
+    from backend.tenant_config import invalidate_params_cache
 
     tenant_id = auth["tenant_id"]
+    invalidate_params_cache(tenant_id)
     params = get_params(tenant_id) or {}
     forward_number = resolve_inbound_forward_number(params)
     return {
@@ -8129,9 +8131,13 @@ def tenant_set_inbound_mode(
         normalize_inbound_mode,
         resolve_inbound_forward_number,
     )
+    from backend.tenant_config import invalidate_params_cache
 
     tenant_id = auth["tenant_id"]
     mode = normalize_inbound_mode(body.inbound_mode)
+    # Lecture fraîche : un autre worker a pu écrire le numéro de renvoi à l'instant
+    # (cache process-local de 20s non partagé entre workers).
+    invalidate_params_cache(tenant_id)
     params = get_params(tenant_id) or {}
     forward_number = resolve_inbound_forward_number(params)
     if mode == INBOUND_MODE_PRACTITIONER and not forward_number:
