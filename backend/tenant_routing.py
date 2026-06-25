@@ -404,6 +404,10 @@ def extract_to_number_from_vapi_payload(payload: dict) -> Optional[str]:
     pn = call.get("phoneNumber")
     if isinstance(pn, dict) and pn.get("number"):
         return str(pn["number"])
+    # assistant-request (routage dynamique) : le DID appelé est dans message.phoneNumber.number
+    mpn = message.get("phoneNumber")
+    if isinstance(mpn, dict) and mpn.get("number"):
+        return str(mpn["number"])
 
     # Chat Completions / racine
     call = payload.get("call") or {}

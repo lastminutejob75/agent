@@ -1028,6 +1028,26 @@ def _vapi_assistant_request_response(payload: Optional[dict] = None) -> JSONResp
     forward = _maybe_inbound_forward_destination(payload)
     if forward is not None:
         return forward
+    # Mode agent : renvoyer en priorité l'assistant Vapi DU CABINET (résolu par DID),
+    # sinon l'assistant global (VAPI_ASSISTANT_ID), sinon un assistant transient.
+    tenant_assistant_id = ""
+    try:
+        from backend.tenant_config import get_params
+        from backend.tenant_routing import resolve_tenant_id_from_vapi_payload
+
+        tenant_id, route_src = resolve_tenant_id_from_vapi_payload(payload or {}, channel="vocal")
+        if tenant_id:
+            params = get_params(tenant_id) or {}
+            tenant_assistant_id = (params.get("vapi_assistant_id") or "").strip()
+            if tenant_assistant_id:
+                logger.info(
+                    "assistant-request: tenant=%s(%s) assistantId=%s (per-tenant)",
+                    tenant_id, route_src, tenant_assistant_id[:24],
+                )
+                return JSONResponse(content={"assistantId": tenant_assistant_id}, status_code=200)
+    except Exception as exc:
+        logger.warning("assistant-request: per-tenant lookup failed err=%s", str(exc)[:160])
+
     assistant_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
     # Log pour vérifier que la variable est bien chargée (Railway: Variables → Service, puis Redeploy)
     logger.info("assistant-request: VAPI_ASSISTANT_ID=%s", os.environ.get("VAPI_ASSISTANT_ID") or "(empty)")

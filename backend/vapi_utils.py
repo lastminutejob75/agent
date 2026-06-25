@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -660,26 +660,75 @@ async def patch_vapi_function_tool(tool_id: str | None = None) -> Dict[str, Any]
         return {"before": current, "after": result}
 
 
+def _normalize_e164_loose(raw: str) -> str:
+    s = (raw or "").strip().replace(" ", "")
+    if s.startswith("00"):
+        s = "+" + s[2:]
+    return s
+
+
+def _dynamic_number_server_config() -> Dict[str, Any]:
+    """Config ``server`` à poser sur un numéro Vapi pour le routage dynamique.
+
+    Avec ce ``server`` (et SANS assistant/squad statique), Vapi envoie un
+    événement ``assistant-request`` à notre webhook à chaque appel entrant :
+    on peut alors renvoyer soit l'assistant du cabinet, soit une ``destination``
+    de transfert direct (switch on/off de la ligne)."""
+    server_config: Dict[str, Any] = {"url": _vapi_webhook_url()}
+    credential_id = (os.environ.get("VAPI_WEBHOOK_CREDENTIAL_ID") or "").strip() or None
+    webhook_secret = (os.environ.get("VAPI_WEBHOOK_SECRET") or "").strip() or None
+    if credential_id:
+        server_config["credentialId"] = credential_id
+    elif webhook_secret:
+        server_config["secret"] = webhook_secret
+    return server_config
+
+
+async def _fetch_vapi_numbers(client: httpx.AsyncClient) -> list:
+    res = await client.get(
+        f"{VAPI_API_URL}/phone-number",
+        headers={"Authorization": f"Bearer {_vapi_api_key()}"},
+        timeout=15,
+    )
+    res.raise_for_status()
+    numbers = res.json()
+    if not isinstance(numbers, list):
+        numbers = numbers.get("phoneNumbers", numbers) if isinstance(numbers, dict) else []
+    return numbers or []
+
+
+async def _patch_number_dynamic_routing(client: httpx.AsyncClient, vapi_id: str) -> None:
+    """Bascule un numéro Vapi en routage dynamique : retire l'assistant/squad
+    statique et pose notre ``server`` (assistant-request)."""
+    res = await client.patch(
+        f"{VAPI_API_URL}/phone-number/{vapi_id}",
+        json={
+            "assistantId": None,
+            "squadId": None,
+            "server": _dynamic_number_server_config(),
+        },
+        headers={
+            "Authorization": f"Bearer {_vapi_api_key()}",
+            "Content-Type": "application/json",
+        },
+        timeout=15,
+    )
+    res.raise_for_status()
+
+
 async def assign_twilio_to_vapi(assistant_id: str, twilio_number: str) -> None:
     """
-    Assigne un numéro Twilio (déjà dans Vapi) à un assistant.
+    Configure un numéro Twilio (déjà dans Vapi) en **routage dynamique**.
+    Le numéro n'est plus lié à un assistant statique : Vapi appelle notre webhook
+    (assistant-request) à chaque appel, ce qui permet le transfert direct (switch
+    on/off) et le routage multi-tenant. L'assistant du cabinet est résolu côté
+    backend via le DID (params.vapi_assistant_id).
     Lève si le numéro n'est pas trouvé dans Vapi.
     """
-    number_clean = twilio_number.strip().replace(" ", "")
-    if number_clean.startswith("00"):
-        number_clean = "+" + number_clean[2:]
+    number_clean = _normalize_e164_loose(twilio_number)
 
     async with httpx.AsyncClient() as client:
-        res = await client.get(
-            f"{VAPI_API_URL}/phone-number",
-            headers={"Authorization": f"Bearer {_vapi_api_key()}"},
-            timeout=10,
-        )
-        res.raise_for_status()
-        numbers = res.json()
-        if not isinstance(numbers, list):
-            numbers = numbers.get("phoneNumbers", numbers) if isinstance(numbers, dict) else []
-
+        numbers = await _fetch_vapi_numbers(client)
         vapi_number = None
         for n in numbers:
             num = n.get("number") or n.get("phoneNumber") or ""
@@ -693,21 +742,42 @@ async def assign_twilio_to_vapi(assistant_id: str, twilio_number: str) -> None:
         if not vapi_id:
             raise ValueError("ID du numéro Vapi introuvable")
 
-        res2 = await client.patch(
-            f"{VAPI_API_URL}/phone-number/{vapi_id}",
-            json={"assistantId": assistant_id},
-            headers={
-                "Authorization": f"Bearer {_vapi_api_key()}",
-                "Content-Type": "application/json",
-            },
-            timeout=10,
-        )
-        res2.raise_for_status()
+        await _patch_number_dynamic_routing(client, vapi_id)
         logger.info(
-            "VAPI_PHONE_ASSIGNED assistant_id=%s number=%s",
-            assistant_id[:24],
+            "VAPI_PHONE_DYNAMIC_ROUTING number=%s assistant_hint=%s",
             number_clean[:12],
+            (assistant_id or "")[:24],
         )
+
+
+async def configure_dynamic_routing(twilio_number: Optional[str] = None) -> Dict[str, Any]:
+    """Bascule un numéro (ou TOUS les numéros si ``twilio_number`` est vide) en
+    routage dynamique côté Vapi. Idempotent. Renvoie un résumé."""
+    target = _normalize_e164_loose(twilio_number) if twilio_number else ""
+    summary: Dict[str, Any] = {"converted": [], "failed": [], "skipped": []}
+    async with httpx.AsyncClient() as client:
+        numbers = await _fetch_vapi_numbers(client)
+        for n in numbers:
+            num = (n.get("number") or n.get("phoneNumber") or "").replace(" ", "")
+            if not num:
+                continue
+            if target and num != target:
+                summary["skipped"].append(num)
+                continue
+            vapi_id = n.get("id") or n.get("phoneNumberId")
+            if not vapi_id:
+                summary["failed"].append({"number": num, "error": "no_id"})
+                continue
+            try:
+                await _patch_number_dynamic_routing(client, vapi_id)
+                summary["converted"].append(num)
+                logger.info("VAPI_PHONE_DYNAMIC_ROUTING (resync) number=%s", num[:12])
+            except Exception as e:
+                summary["failed"].append({"number": num, "error": str(e)[:160]})
+                logger.warning("configure_dynamic_routing failed number=%s err=%s", num[:12], str(e)[:160])
+    if target and not summary["converted"] and target not in [f.get("number") for f in summary["failed"]]:
+        raise ValueError(f"Numéro {twilio_number} non trouvé dans Vapi")
+    return summary
 
 
 async def delete_vapi_assistant(assistant_id: str) -> bool:

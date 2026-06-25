@@ -2372,6 +2372,36 @@ def admin_email_test(
     return {"ok": True, "message": "Email envoyé"}
 
 
+class AdminVapiDynamicRoutingBody(BaseModel):
+    number: Optional[str] = Field(
+        default=None,
+        description="Numéro E.164 à basculer. Vide = tous les numéros Vapi.",
+        max_length=32,
+    )
+
+
+@router.post("/admin/vapi/dynamic-routing")
+async def admin_vapi_dynamic_routing(
+    body: AdminVapiDynamicRoutingBody = Body(default=AdminVapiDynamicRoutingBody()),
+    _: None = Depends(_verify_admin),
+):
+    """
+    Bascule un (ou tous les) numéro(s) Vapi en **routage dynamique** :
+    retire l'assistant statique du numéro et pose notre webhook (assistant-request).
+    Indispensable pour que le switch on/off de la ligne (transfert direct) et le
+    routage multi-tenant fonctionnent. Idempotent.
+    """
+    from backend.vapi_utils import configure_dynamic_routing
+
+    try:
+        summary = await configure_dynamic_routing((body.number or "").strip() or None)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Échec configuration Vapi : {str(e)[:200]}")
+    return {"ok": True, **summary}
+
+
 # --- Leads pré-onboarding (wizard "Créer votre assistante") ---
 
 
