@@ -19,6 +19,7 @@ import NextAppointmentCard from "../components/home/NextAppointmentCard.jsx";
 import TasksCard from "../components/home/TasksCard.jsx";
 import AgendaTodayCard from "../components/home/AgendaTodayCard.jsx";
 import DarkSummaryCard from "../components/home/DarkSummaryCard.jsx";
+import InboundModeSwitch from "../components/home/InboundModeSwitch.jsx";
 
 const CLARA_PHOTO = "/images/clara-headset.png";
 
@@ -788,6 +789,8 @@ export default function AppDashboard() {
           </span>
         </div>
       ) : null}
+
+      <InboundModeSwitch initialMode={me?.inbound_mode} />
 
       <HomeHeroSection
         handledRequestsCount={requestSummary.handled}

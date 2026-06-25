@@ -174,6 +174,8 @@ def pg_update_tenant_params(tenant_id, params):
     try:
         _invalidate_tenant_me_detail_cache(int(tenant_id))
         _invalidate_tenant_agenda_detail_cache(int(tenant_id))
+        from backend.tenant_config import invalidate_params_cache
+        invalidate_params_cache(int(tenant_id))
     except Exception:
         pass
     return res
@@ -2402,6 +2404,7 @@ def tenant_me(auth: dict = Depends(require_tenant_auth)):
         "transfer_no_consultation": _is_truthy(params.get("transfer_no_consultation")),
         "transfer_config_confirmed_signature": params.get("transfer_config_confirmed_signature", ""),
         "transfer_config_confirmed_at": params.get("transfer_config_confirmed_at", ""),
+        "inbound_mode": (params.get("inbound_mode") or "agent"),
         "dashboard_team_note": params.get("dashboard_team_note", ""),
         "dashboard_team_note_updated_at": params.get("dashboard_team_note_updated_at", ""),
         "dashboard_team_notes": dashboard_team_notes,
@@ -8058,6 +8061,7 @@ def tenant_patch_params(
         "transfer_number", "transfer_live_enabled", "transfer_callback_enabled",
         "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
         "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
+        "inbound_mode",
         "practitioner_name", "website_url", "languages", "accepts_new_patients", "practitioner_photo_url", "public_slug",
         "opening_hours_json", "temporary_closure_enabled", "temporary_closure_start", "temporary_closure_end", "temporary_closure_message",
         "default_appointment_duration_minutes", "minimum_booking_notice_hours", "appointment_reschedule_allowed",
@@ -8088,6 +8092,57 @@ def tenant_patch_params(
     if not ok:
         set_params(tenant_id, params)
     return {"ok": True}
+
+
+@router.get("/inbound-mode")
+def tenant_get_inbound_mode(auth: dict = Depends(require_tenant_auth)):
+    """État courant de la réception des appels (agent vocal vs ligne praticien)."""
+    from backend.inbound_mode import get_inbound_mode, resolve_inbound_forward_number
+
+    tenant_id = auth["tenant_id"]
+    params = get_params(tenant_id) or {}
+    forward_number = resolve_inbound_forward_number(params)
+    return {
+        "inbound_mode": get_inbound_mode(params),
+        "forward_number": forward_number,
+        "forward_ready": bool(forward_number),
+    }
+
+
+class InboundModeBody(BaseModel):
+    inbound_mode: str
+
+
+@router.post("/inbound-mode")
+def tenant_set_inbound_mode(
+    body: InboundModeBody,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Bascule instantanée : l'agent prend les appels OU le praticien reprend la main.
+
+    En mode ``practitioner``, les appels entrants sont renvoyés directement vers la
+    ligne du praticien (l'agent ne décroche pas).
+    """
+    from backend.inbound_mode import (
+        INBOUND_MODE_PRACTITIONER,
+        normalize_inbound_mode,
+        resolve_inbound_forward_number,
+    )
+
+    tenant_id = auth["tenant_id"]
+    mode = normalize_inbound_mode(body.inbound_mode)
+    params = get_params(tenant_id) or {}
+    forward_number = resolve_inbound_forward_number(params)
+    if mode == INBOUND_MODE_PRACTITIONER and not forward_number:
+        raise HTTPException(
+            400,
+            "Aucune ligne de renvoi configurée. Renseignez un numéro de transfert "
+            "ou la ligne du praticien avant de reprendre les appels.",
+        )
+    ok = pg_update_tenant_params(tenant_id, {"inbound_mode": mode})
+    if not ok:
+        set_params(tenant_id, {"inbound_mode": mode})
+    return {"ok": True, "inbound_mode": mode, "forward_number": forward_number, "forward_ready": bool(forward_number)}
 
 
 @router.get("/horaires")

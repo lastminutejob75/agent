@@ -970,12 +970,64 @@ def _extract_customer_name_from_vapi_payload(payload: dict) -> str:
     return ""
 
 
-def _vapi_assistant_request_response() -> JSONResponse:
+def _maybe_inbound_forward_destination(payload: Optional[dict]) -> Optional[JSONResponse]:
+    """Si le cabinet a « repris la main » (inbound_mode=practitioner), renvoie une
+    réponse Vapi ``destination`` qui transfère l'appel directement vers la ligne du
+    praticien — l'agent ne décroche pas. Renvoie None sinon (comportement normal)."""
+    if not isinstance(payload, dict):
+        return None
+    try:
+        from backend.inbound_mode import (
+            INBOUND_MODE_PRACTITIONER,
+            get_inbound_mode,
+            resolve_inbound_forward_number,
+        )
+        from backend.tenant_config import get_params
+        from backend.tenant_routing import resolve_tenant_id_from_vapi_payload
+        from backend.vapi_live_transfer import mask_phone_last4
+
+        tenant_id, route_src = resolve_tenant_id_from_vapi_payload(payload, channel="vocal")
+        if not tenant_id:
+            return None
+        params = get_params(tenant_id) or {}
+        if get_inbound_mode(params) != INBOUND_MODE_PRACTITIONER:
+            return None
+        forward_number = resolve_inbound_forward_number(params)
+        if not forward_number:
+            logger.warning(
+                "INBOUND_FORWARD_SKIPPED tenant=%s(%s) reason=no_forward_number",
+                tenant_id, route_src,
+            )
+            return None
+        logger.info(
+            "INBOUND_FORWARD_DIRECT tenant=%s(%s) destination=%s",
+            tenant_id, route_src, mask_phone_last4(forward_number),
+        )
+        return JSONResponse(
+            content={
+                "destination": {
+                    "type": "number",
+                    "number": forward_number,
+                    "callerId": "{{phoneNumber.number}}",
+                }
+            },
+            status_code=200,
+        )
+    except Exception as exc:
+        logger.warning("INBOUND_FORWARD_CHECK_FAILED err=%s", str(exc)[:160])
+        return None
+
+
+def _vapi_assistant_request_response(payload: Optional[dict] = None) -> JSONResponse:
     """
     Réponse pour message.type === "assistant-request".
     Vapi exige un body avec assistantId ou assistant (transient). Sans ça → endedReason: assistant-request-returned-no-assistant, fallback anglais.
+    Si le praticien a repris la main, on renvoie plutôt une ``destination`` (forward direct).
     """
     import os
+    forward = _maybe_inbound_forward_destination(payload)
+    if forward is not None:
+        return forward
     assistant_id = (os.environ.get("VAPI_ASSISTANT_ID") or "").strip()
     # Log pour vérifier que la variable est bien chargée (Railway: Variables → Service, puis Redeploy)
     logger.info("assistant-request: VAPI_ASSISTANT_ID=%s", os.environ.get("VAPI_ASSISTANT_ID") or "(empty)")
@@ -1163,8 +1215,9 @@ async def _vapi_webhook_inner(request: Request, payload: dict):
     msg_type = message.get("type") or message.get("event") or ""
 
     # assistant-request : répondre immédiatement avec assistantId ou assistant (évite 5.8s + PG puis {} → Vapi fallback anglais)
+    # Si le praticien a repris la main (inbound_mode=practitioner), on renvoie une destination (forward direct).
     if msg_type == "assistant-request":
-        return _vapi_assistant_request_response()
+        return _vapi_assistant_request_response(payload)
 
     # end-of-call-report : ingérer conso Vapi (durée, coût) dans vapi_call_usage (source de vérité billing)
     # + mettre à jour vapi_calls avec status/timestamps fiables (filet si status-update bg échoue)

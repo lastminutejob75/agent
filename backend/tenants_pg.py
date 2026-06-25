@@ -491,6 +491,7 @@ def pg_update_tenant_params(tenant_id: int, params: dict) -> bool:
         "transfer_live_enabled", "transfer_callback_enabled",
         "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
         "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
+        "inbound_mode",
         # --- "Mon cabinet" : champs profil ---
         "practitioner_name", "website_url", "languages", "accepts_new_patients",
         "practitioner_photo_url", "public_slug", "address_line",

@@ -338,6 +338,9 @@ export const api = {
   tenantRgpd: () => request("/api/tenant/rgpd", { tenant: true }),
   tenantPatchParams: (params) =>
     request("/api/tenant/params", { method: "PATCH", body: params, tenant: true }),
+  tenantGetInboundMode: () => request("/api/tenant/inbound-mode", { tenant: true }),
+  tenantSetInboundMode: (mode) =>
+    request("/api/tenant/inbound-mode", { method: "POST", body: { inbound_mode: mode }, tenant: true }),
   tenantPatchDashboardTeamNote: (note) =>
     request("/api/tenant/dashboard/team-note", {
       method: "PATCH",

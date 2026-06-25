@@ -825,6 +825,19 @@ def faq_to_prompt_text(faq: List[Dict[str, Any]], tenant_id: Optional[int] = Non
     return "\n".join(lines)
 
 
+def invalidate_params_cache(tenant_id: Optional[int] = None) -> None:
+    """Vide le cache process-local des params (lecture vocale).
+
+    À appeler après toute écriture de params pour que les changements (ex. le
+    switch inbound_mode) soient pris en compte sans attendre l'expiration du TTL.
+    """
+    with _params_cache_lock:
+        if tenant_id is None:
+            _params_cache.clear()
+        else:
+            _params_cache.pop(int(tenant_id), None)
+
+
 def get_params(tenant_id: Optional[int] = None) -> Dict[str, str]:
     """
     Retourne params_json pour un tenant (calendar_provider, calendar_id, etc.).
@@ -894,6 +907,7 @@ def set_params(tenant_id: int, params: Dict[str, str]) -> None:
         "transfer_live_enabled", "transfer_callback_enabled",
         "transfer_cases", "transfer_hours", "transfer_always_urgent", "transfer_no_consultation",
         "transfer_config_confirmed_signature", "transfer_config_confirmed_at",
+        "inbound_mode",
         "payment_methods", "pmr_accessibility", "parking_access",
         "third_party_payment", "new_patients_policy", "results_policy",
     )
