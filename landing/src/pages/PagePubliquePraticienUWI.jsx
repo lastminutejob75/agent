@@ -1164,6 +1164,7 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
   const [error, setError] = useState("");
   const [lookupPhone, setLookupPhone] = useState("");
   const [lookupEmail, setLookupEmail] = useState("");
+  const [lookupName, setLookupName] = useState("");
   const [lookupCode, setLookupCode] = useState(() => String(initialBookingCode || "").trim().toUpperCase());
   const [verifyPhone, setVerifyPhone] = useState("");
   const [verifyEmail, setVerifyEmail] = useState("");
@@ -1438,34 +1439,45 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
     setError("");
     const phone = lookupPhone.trim();
     const email = lookupEmail.trim();
-    if (!phone && !email) {
-      setError("Indiquez le telephone ou l'email associe a votre fiche patient.");
+    const nameVal = lookupName.trim();
+    if (!phone) {
+      setError("Indiquez votre numero de telephone.");
       return;
     }
-    if (phone && !isValidFrenchPhone(phone)) {
+    if (!isValidFrenchPhone(phone)) {
       setError("Numero de telephone invalide.");
+      return;
+    }
+    const nameTokens = nameVal.split(/\s+/).filter((t) => t.length >= 2);
+    if (!email && nameTokens.length < 2) {
+      setError("Pour vous identifier : telephone + email, OU telephone + nom ET prenom.");
       return;
     }
     setLoading(true);
     try {
-      const qs = new URLSearchParams();
-      if (phone) qs.set("phone", normalizeFrenchPhone(phone));
-      if (email) qs.set("email", email);
       const data = await fetchJson(
-        `/api/public/praticiens/${encodeURIComponent(slug)}/patient-hint?${qs.toString()}`
+        `/api/public/${encodeURIComponent(slug)}/verify-registered-patient`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            phone: normalizeFrenchPhone(phone),
+            email: email || undefined,
+            name: nameVal || undefined,
+          }),
+        }
       );
-      if (!data?.found) {
+      if (!data?.verified) {
         setError(
-          "Cette demande est reservee aux patients deja enregistres au cabinet. "
-          + "Prenez rendez-vous en ligne ou contactez le cabinet par telephone."
+          "Identification impossible. Verifiez votre telephone ET votre email "
+          + "(ou votre nom et prenom) tels qu'enregistres au cabinet."
         );
         return;
       }
-      const display = String(data.displayName || data.name || "").trim();
+      const display = String(data.name || nameVal || "").trim();
       setCallbackName(display);
-      setCallbackPhone(data.phone ? normalizeFrenchPhone(data.phone) : (phone ? normalizeFrenchPhone(phone) : ""));
+      setCallbackPhone(data.phone ? normalizeFrenchPhone(data.phone) : normalizeFrenchPhone(phone));
       setCallbackEmail(String(data.email || email || "").trim());
-      rememberLookupContact(phone || data.phone || "", data.email || email || "");
+      rememberLookupContact(phone, data.email || email || "");
       setStep("callback");
     } catch (err) {
       setError(err?.message || "Verification impossible pour le moment.");
@@ -1603,11 +1615,13 @@ function PublicAppointmentActionModal({ mode, slug, onClose, push, slots, onRefr
             <>
               <p className="actionModalHint">
                 {isMessageMode
-                  ? "Laisser un message est reserve aux patients du cabinet. Identifiez-vous avec le telephone ou l'email de votre fiche patient."
-                  : "Pour etre rappele, identifiez-vous avec le telephone ou l'email de votre fiche patient au cabinet."}
+                  ? "Laisser un message est reserve aux patients du cabinet. Pour verifier votre identite : votre telephone + votre email, OU votre telephone + votre nom et prenom (tels qu'enregistres au cabinet)."
+                  : "Pour etre rappele, verifiez votre identite : votre telephone + votre email, OU votre telephone + votre nom et prenom (tels qu'enregistres au cabinet)."}
               </p>
-              <input value={lookupPhone} onChange={(e) => setLookupPhone(e.target.value)} placeholder="Telephone" type="tel" />
-              <input value={lookupEmail} onChange={(e) => setLookupEmail(e.target.value)} placeholder="Email (facultatif)" type="email" />
+              <input value={lookupPhone} onChange={(e) => setLookupPhone(e.target.value)} placeholder="Telephone (obligatoire)" type="tel" />
+              <input value={lookupEmail} onChange={(e) => setLookupEmail(e.target.value)} placeholder="Email enregistre au cabinet" type="email" autoComplete="email" />
+              <p style={{ textAlign: "center", color: "#94a3b8", fontSize: 12, margin: "2px 0", fontWeight: 600 }}>— ou —</p>
+              <input value={lookupName} onChange={(e) => setLookupName(e.target.value)} placeholder="Nom ET prenom" autoComplete="name" />
               {error ? <p className="fieldError">{error}</p> : null}
               <button className="primary" type="button" disabled={loading} onClick={() => void verifyRegisteredPatientForCallback()}>
                 {loading ? "Verification…" : "Continuer"}

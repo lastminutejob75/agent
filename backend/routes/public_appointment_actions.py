@@ -13,7 +13,12 @@ from backend.public_appointment_actions import cancel_appointment, lookup_appoin
 from backend.public_bookings_pg import insert_callback_request
 from backend.public_slug_cache import tenant_id_for_slug
 from backend.rate_limit import check_sliding_window, client_ip
-from backend.registered_patient_access import REGISTERED_PATIENT_ONLY_DETAIL, find_registered_patient
+from backend.registered_patient_access import (
+    REGISTERED_PATIENT_ONLY_DETAIL,
+    TWO_FACTOR_REQUIRED_DETAIL,
+    find_registered_patient,
+    verify_registered_patient_2fa,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,12 @@ class PublicCallbackRequestBody(BaseModel):
     reason: str = Field("other", max_length=80)
     message: Optional[str] = Field(None, max_length=2000)
     actionToken: Optional[str] = Field(None, max_length=2000)
+
+
+class PublicVerifyPatientBody(BaseModel):
+    phone: str = Field(..., min_length=5, max_length=40)
+    email: Optional[str] = Field(None, max_length=254)
+    name: Optional[str] = Field(None, max_length=200)
 
 
 def _resolve_tenant_id(slug: str) -> int:
@@ -143,6 +154,34 @@ def public_appointments_reschedule(slug: str, body: PublicAppointmentRescheduleB
     )
 
 
+@router.post("/{slug}/verify-registered-patient")
+def public_verify_registered_patient(slug: str, body: PublicVerifyPatientBody, request: Request) -> Dict[str, Any]:
+    """Vérifie l'identité 2 facteurs (téléphone + email OU nom+prénom) avant
+    d'autoriser une demande/un message. Réponse neutre si échec (anti-énumération)."""
+    _rate_limit_public_action(request, slug, "public_verify_patient")
+    tenant_id = _resolve_tenant_id(slug)
+    if not validate_phone(body.phone):
+        raise HTTPException(422, "Numero de telephone invalide.")
+    email = (body.email or "").strip().lower()
+    if email and not validate_email(email):
+        raise HTTPException(422, "Adresse email invalide.")
+    phone = normalize_phone_number(body.phone) or body.phone.strip()
+    profile = verify_registered_patient_2fa(tenant_id, phone=phone, email=email or None, name=body.name)
+    if not profile:
+        return {"verified": False}
+    display = (
+        (profile.get("display_name") or "").strip()
+        or (profile.get("validated_name") or "").strip()
+        or (profile.get("raw_name") or "").strip()
+    )
+    return {
+        "verified": True,
+        "name": display,
+        "email": str(profile.get("email") or "").strip(),
+        "phone": str(profile.get("phone") or phone).strip(),
+    }
+
+
 @router.post("/{slug}/callback-requests")
 def public_callback_request(slug: str, body: PublicCallbackRequestBody, request: Request) -> Dict[str, Any]:
     _rate_limit_public_action(request, slug, "public_callback")
@@ -153,7 +192,10 @@ def public_callback_request(slug: str, body: PublicCallbackRequestBody, request:
     if email and not validate_email(email):
         raise HTTPException(422, "Adresse email invalide.")
     phone = normalize_phone_number(body.phone) or body.phone.strip()
-    if not find_registered_patient(tenant_id, phone=phone, email=email or None):
+    # 2 facteurs obligatoires : téléphone + (email OU nom+prénom) sur la même fiche.
+    if not verify_registered_patient_2fa(tenant_id, phone=phone, email=email or None, name=body.name):
+        if find_registered_patient(tenant_id, phone=phone):
+            raise HTTPException(403, TWO_FACTOR_REQUIRED_DETAIL)
         raise HTTPException(403, REGISTERED_PATIENT_ONLY_DETAIL)
     appointment_source = None
     appointment_id = None
