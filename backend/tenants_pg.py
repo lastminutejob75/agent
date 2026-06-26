@@ -262,13 +262,15 @@ def pg_get_tenant_flags(tenant_id: int) -> Optional[Tuple[dict, str]]:
                     (tenant_id,),
                 )
                 row = cur.fetchone()
-                if row and row[0]:
-                    data = row[0]
-                    if hasattr(data, "copy"):
-                        data = dict(data)
-                    elif isinstance(data, str):
-                        data = json.loads(data) if data else {}
-                    return (data if isinstance(data, dict) else {}, "pg")
+                if row:
+                    # row_factory=dict_row sur le pool → accès par nom (pas row[0]).
+                    data = row.get("flags_json") if isinstance(row, dict) else row[0]
+                    if data:
+                        if hasattr(data, "copy"):
+                            data = dict(data)
+                        elif isinstance(data, str):
+                            data = json.loads(data) if data else {}
+                        return (data if isinstance(data, dict) else {}, "pg")
         return None
 
     try:
@@ -300,13 +302,15 @@ def pg_get_tenant_params(tenant_id: int) -> Optional[Tuple[dict, str]]:
                     (tenant_id,),
                 )
                 row = cur.fetchone()
-                if row and row[0]:
-                    data = row[0]
-                    if hasattr(data, "copy"):
-                        data = dict(data)
-                    elif isinstance(data, str):
-                        data = json.loads(data) if data else {}
-                    return (data if isinstance(data, dict) else {}, "pg")
+                if row:
+                    # row_factory=dict_row sur le pool → accès par nom (pas row[0]).
+                    data = row.get("params_json") if isinstance(row, dict) else row[0]
+                    if data:
+                        if hasattr(data, "copy"):
+                            data = dict(data)
+                        elif isinstance(data, str):
+                            data = json.loads(data) if data else {}
+                        return (data if isinstance(data, dict) else {}, "pg")
         return None
 
     try:
