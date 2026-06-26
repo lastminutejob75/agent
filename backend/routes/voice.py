@@ -990,9 +990,23 @@ def _maybe_inbound_forward_destination(payload: Optional[dict]) -> Optional[JSON
         if not tenant_id:
             return None
         params = get_params(tenant_id) or {}
-        if get_inbound_mode(params) != INBOUND_MODE_PRACTITIONER:
-            return None
+        mode = get_inbound_mode(params)
         forward_number = resolve_inbound_forward_number(params)
+        # Lecture autoritative (bypass cache + RLS) si la lecture contextuelle
+        # semble incomplète (le RLS/cache peut masquer la dernière écriture).
+        if mode != INBOUND_MODE_PRACTITIONER or not forward_number:
+            try:
+                from backend.tenants_pg import pg_load_tenant_params_bypass
+
+                raw = pg_load_tenant_params_bypass(tenant_id) or {}
+                if raw:
+                    mode = get_inbound_mode(raw)
+                    if mode == INBOUND_MODE_PRACTITIONER:
+                        forward_number = resolve_inbound_forward_number(raw) or forward_number
+            except Exception as bypass_exc:
+                logger.warning("INBOUND_FORWARD_BYPASS_FAILED err=%s", str(bypass_exc)[:160])
+        if mode != INBOUND_MODE_PRACTITIONER:
+            return None
         if not forward_number:
             logger.warning(
                 "INBOUND_FORWARD_SKIPPED tenant=%s(%s) reason=no_forward_number",

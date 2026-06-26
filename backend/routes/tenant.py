@@ -8095,6 +8095,33 @@ def tenant_patch_params(
     return {"ok": True}
 
 
+def _authoritative_forward_number(tenant_id: int, ctx_params: dict) -> str:
+    """Relecture autoritative du numéro de renvoi en contournant cache et RLS.
+
+    La lecture contextuelle (``get_params``) peut renvoyer vide si le RLS/cache
+    n'expose pas la dernière écriture ; on relit alors ``params_json`` brut.
+    """
+    from backend.inbound_mode import resolve_inbound_forward_number
+
+    try:
+        from backend.tenants_pg import pg_load_tenant_params_bypass
+
+        raw = pg_load_tenant_params_bypass(tenant_id) or {}
+        if raw:
+            forward = resolve_inbound_forward_number(raw)
+            if forward:
+                missing_in_ctx = not resolve_inbound_forward_number(ctx_params or {})
+                if missing_in_ctx:
+                    logger.warning(
+                        "INBOUND_FORWARD_CTX_MISS tenant=%s : numero present en base mais absent de la lecture contextuelle",
+                        tenant_id,
+                    )
+                return forward
+    except Exception as e:
+        logger.warning("_authoritative_forward_number failed tenant=%s err=%s", tenant_id, str(e)[:160])
+    return ""
+
+
 @router.get("/inbound-mode")
 def tenant_get_inbound_mode(auth: dict = Depends(require_tenant_auth)):
     """État courant de la réception des appels (agent vocal vs ligne praticien)."""
@@ -8105,6 +8132,8 @@ def tenant_get_inbound_mode(auth: dict = Depends(require_tenant_auth)):
     invalidate_params_cache(tenant_id)
     params = get_params(tenant_id) or {}
     forward_number = resolve_inbound_forward_number(params)
+    if not forward_number:
+        forward_number = _authoritative_forward_number(tenant_id, params)
     return {
         "inbound_mode": get_inbound_mode(params),
         "forward_number": forward_number,
@@ -8140,6 +8169,13 @@ def tenant_set_inbound_mode(
     invalidate_params_cache(tenant_id)
     params = get_params(tenant_id) or {}
     forward_number = resolve_inbound_forward_number(params)
+    if not forward_number:
+        forward_number = _authoritative_forward_number(tenant_id, params)
+    logger.info(
+        "INBOUND_MODE_SET tenant=%s mode=%s forward_ready=%s pract=%r number=%r phone=%r",
+        tenant_id, mode, bool(forward_number),
+        params.get("transfer_practitioner_phone"), params.get("transfer_number"), params.get("phone_number"),
+    )
     if mode == INBOUND_MODE_PRACTITIONER and not forward_number:
         raise HTTPException(
             400,
