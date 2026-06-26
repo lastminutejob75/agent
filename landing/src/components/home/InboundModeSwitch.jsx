@@ -43,6 +43,7 @@ export default function InboundModeSwitch({ initialMode = "agent" }) {
   const [error, setError] = useState("");
   const [phoneInput, setPhoneInput] = useState("");
   const [savingPhone, setSavingPhone] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,12 +94,21 @@ export default function InboundModeSwitch({ initialMode = "agent" }) {
       setForwardNumber(normalized);
       setForwardReady(true);
       setPhoneInput("");
+      setEditing(false);
     } catch (e) {
       setError(e?.message || "Impossible d'enregistrer le numéro pour le moment.");
     } finally {
       setSavingPhone(false);
     }
   }, [phoneInput, savingPhone]);
+
+  const startEdit = useCallback(() => {
+    setPhoneInput(forwardNumber || "");
+    setError("");
+    setEditing(true);
+  }, [forwardNumber]);
+
+  const showEditor = editing || (!forwardReady && !practitioner);
 
   const wrap = {
     display: "flex",
@@ -143,10 +153,28 @@ export default function InboundModeSwitch({ initialMode = "agent" }) {
               : "L'assistant vocal répond aux appels entrants et transfère si besoin."}
           </div>
           {error ? <div style={{ fontSize: 12, color: T.red, marginTop: 4 }}>{error}</div> : null}
-          {!forwardReady && !practitioner ? (
+
+          {forwardReady && !showEditor ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+              <span style={{ fontSize: 12.5, color: T.navy, fontWeight: 700 }}>
+                📞 Renvoi vers {prettyPhone(forwardNumber)}
+              </span>
+              <button
+                type="button"
+                onClick={startEdit}
+                style={{ fontSize: 12, color: T.tealDark, background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline", fontWeight: 600 }}
+              >
+                Modifier
+              </button>
+            </div>
+          ) : null}
+
+          {showEditor ? (
             <div style={{ marginTop: 8 }}>
               <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>
-                Indiquez le numéro qui sonnera quand vous reprenez les appels :
+                {forwardReady
+                  ? "Modifier le numéro qui sonnera quand vous reprenez les appels :"
+                  : "Indiquez le numéro qui sonnera quand vous reprenez les appels :"}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <input
@@ -184,6 +212,16 @@ export default function InboundModeSwitch({ initialMode = "agent" }) {
                 >
                   {savingPhone ? "..." : "Enregistrer"}
                 </button>
+                {forwardReady ? (
+                  <button
+                    type="button"
+                    onClick={() => { setEditing(false); setPhoneInput(""); setError(""); }}
+                    disabled={savingPhone}
+                    style={{ fontSize: 12.5, color: T.muted, background: "none", border: "none", padding: "9px 4px", cursor: "pointer", whiteSpace: "nowrap" }}
+                  >
+                    Annuler
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : null}
