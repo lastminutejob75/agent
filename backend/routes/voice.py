@@ -2115,8 +2115,46 @@ async def vapi_tool(request: Request):
                         return JSONResponse(th.build_vapi_tool_response(tool_call_id, replay, None), status_code=200)
                 except Exception:
                     pass
-            transfer_text = "Je vous transfère maintenant."
-            return JSONResponse(th.build_vapi_tool_response(tool_call_id, transfer_text, None), status_code=200)
+            transfer_text = "Je vous mets en relation, restez en ligne."
+            # L'agent a décidé de transférer (insiste / urgent / demande explicite).
+            # On déclenche le transfert live via Vapi Live Call Control (controlUrl),
+            # en respectant les préférences et heures du cabinet (handoff_router).
+            _prev_state = getattr(session, "state", "")
+            session.state = "TRANSFERRED"
+            session.last_transfer_reason = transfer_reason or "explicit_transfer_request"
+            _new_text, _suppressed = _maybe_start_live_transfer_for_session(
+                payload,
+                session,
+                response_text=transfer_text,
+                user_text=user_message or "",
+                suppress_model_tts=True,
+            )
+            if _suppressed:
+                # Transfert live déclenché : Vapi prononce le message puis bascule l'appel.
+                logger.info(
+                    "[VAPI_TOOL_TRANSFER_LIVE_OK] call_id=%s reason=%s",
+                    call_id[:24] if call_id else "",
+                    session.last_transfer_reason,
+                )
+                return JSONResponse(th.build_vapi_tool_response(tool_call_id, "", None), status_code=200)
+            # Transfert live indisponible (hors heures, non autorisé, ou pas de controlUrl) :
+            # on restaure l'état pour ne pas bloquer la conversation et on propose le rappel.
+            session.state = _prev_state
+            try:
+                if hasattr(ENGINE.session_store, "save"):
+                    ENGINE.session_store.save(session)
+            except Exception:
+                pass
+            logger.warning(
+                "[VAPI_TOOL_TRANSFER_LIVE_FALLBACK] call_id=%s reason=%s",
+                call_id[:24] if call_id else "",
+                session.last_transfer_reason,
+            )
+            fallback_text = (
+                "Je ne peux pas vous mettre en relation tout de suite, "
+                "mais je transmets votre demande au cabinet qui vous rappellera au plus vite."
+            )
+            return JSONResponse(th.build_vapi_tool_response(tool_call_id, fallback_text, None), status_code=200)
 
         # --- faq ou legacy : message utilisateur → tenant FAQ d'abord, engine en fallback ---
         if not user_message and not action:
