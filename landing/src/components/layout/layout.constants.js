@@ -16,7 +16,7 @@ export const ROUTES = {
   "/app/appels": { title: "Journal des appels", sub: "Historique des appels traités par Clara" },
   "/app/patients": { title: "Patients", sub: "Liste et suivi des dossiers patients" },
   "/app/patient-dashboard": { title: "Patients", sub: "" },
-  "/app/settings": { title: "Statistiques", sub: "Performance et configuration du cabinet" },
+  "/app/settings": { title: "Paramètres", sub: "Configuration du cabinet, transfert d'appel et sécurité" },
   "/app/profile": { title: "Mon cabinet", sub: "Centre de configuration du cabinet medical" },
 };
 
@@ -27,4 +27,5 @@ export const NAV_ITEMS = [
   { to: "/app/patient-dashboard", label: "Patients", icon: "●" },
   { to: "/app/appels", label: "Appels", icon: "☎" },
   { to: "/app/profile", label: "Mon cabinet", icon: "⌘" },
+  { to: "/app/settings", label: "Paramètres", icon: "⚙" },
 ];
