@@ -2119,9 +2119,21 @@ async def vapi_tool(request: Request):
             # L'agent a décidé de transférer (insiste / urgent / demande explicite).
             # On déclenche le transfert live via Vapi Live Call Control (controlUrl),
             # en respectant les préférences et heures du cabinet (handoff_router).
+            # La valeur transfer_reason renvoyée par le LLM est libre (ex. "demande_humain")
+            # et n'est pas reconnue par handoff_router → on la normalise vers une raison
+            # connue. Un appel explicite du tool de transfert = demande explicite (toujours
+            # autorisée, mais soumise aux heures du cabinet) ; on détecte aussi l'urgence
+            # et la demande de praticien.
+            _reason_raw = transfer_reason
+            if any(k in _reason_raw for k in ("urgen", "emergenc")):
+                _mapped_reason = "urgent_non_vital_case"
+            elif any(k in _reason_raw for k in ("medecin", "médecin", "docteur", "praticien", "doctor")):
+                _mapped_reason = "explicit_practitioner_request"
+            else:
+                _mapped_reason = "explicit_transfer_request"
             _prev_state = getattr(session, "state", "")
             session.state = "TRANSFERRED"
-            session.last_transfer_reason = transfer_reason or "explicit_transfer_request"
+            session.last_transfer_reason = _mapped_reason
             _new_text, _suppressed = _maybe_start_live_transfer_for_session(
                 payload,
                 session,
