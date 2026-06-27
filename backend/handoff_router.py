@@ -128,6 +128,12 @@ def _is_within_transfer_hours(params: Dict[str, Any]) -> bool:
         end_hour, end_minute = [int(part) for part in end_raw.split(":", 1)]
         start_minutes = start_hour * 60 + start_minute
         end_minutes = end_hour * 60 + end_minute
+        # "00:00" en fin de plage = minuit (fin de journée), pas début de journée.
+        if end_minutes == 0:
+            end_minutes = 24 * 60
+        # Plage qui traverse minuit (ex. 22:00 -> 06:00).
+        if end_minutes <= start_minutes:
+            return current_minutes >= start_minutes or current_minutes <= end_minutes
         return start_minutes <= current_minutes <= end_minutes
     except Exception:
         return True
