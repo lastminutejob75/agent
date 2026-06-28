@@ -2131,6 +2131,79 @@ async def vapi_tool(request: Request):
                 _mapped_reason = "explicit_practitioner_request"
             else:
                 _mapped_reason = "explicit_transfer_request"
+            # --- Garde-fou "numéro public" : transfert live réservé aux patients connus ---
+            # Réglable par praticien via transfer_registered_only (activé par défaut).
+            # Un appelant inconnu ne fait PAS sonner le praticien : on enregistre une
+            # "demande à traiter" (callback_requests) et on l'informe d'un rappel.
+            try:
+                from backend.tenant_config import get_params as _get_tenant_params
+                _tenant_params = _get_tenant_params(resolved_tenant_id) or {}
+            except Exception:
+                _tenant_params = {}
+            _reg_only_raw = _tenant_params.get("transfer_registered_only")
+            _registered_only = True if _reg_only_raw is None else str(_reg_only_raw).strip().lower() == "true"
+            if _registered_only:
+                from backend.tenant_routing import extract_customer_phone_from_vapi_payload
+                from backend.registered_patient_access import find_registered_patient
+                _caller_phone = extract_customer_phone_from_vapi_payload(payload)
+                _known_patient = bool(_caller_phone) and (
+                    find_registered_patient(resolved_tenant_id, phone=_caller_phone) is not None
+                )
+                if not _known_patient:
+                    _is_urgent = _mapped_reason == "urgent_non_vital_case"
+                    _cb_id = None
+                    if _caller_phone:
+                        try:
+                            from backend.public_bookings_pg import (
+                                _HANDOFF_REASON_TO_CALLBACK,
+                                get_callback_request_by_call_id,
+                                insert_callback_request,
+                            )
+                            _existing_cb = (
+                                get_callback_request_by_call_id(resolved_tenant_id, call_id)
+                                if call_id else None
+                            )
+                            if not _existing_cb:
+                                _cb_reason = _HANDOFF_REASON_TO_CALLBACK.get(_mapped_reason, "message")
+                                _cb_msg = (user_message or "").strip() or (
+                                    "Demande de mise en relation (appelant non enregistré au cabinet)."
+                                )
+                                _cb_id = insert_callback_request(
+                                    tenant_id=resolved_tenant_id,
+                                    name=(params.get("patient_name") or None),
+                                    phone=_caller_phone,
+                                    email=None,
+                                    reason=_cb_reason,
+                                    message=_cb_msg,
+                                    appointment_source="vocal",
+                                    appointment_id=call_id or None,
+                                    unmatched=True,
+                                    source="vocal_agent",
+                                    call_id=call_id or None,
+                                )
+                        except Exception as _cb_err:
+                            logger.warning(
+                                "[VAPI_TOOL_TRANSFER_CALLBACK_FAILED] call_id=%s err=%s",
+                                call_id[:24] if call_id else "",
+                                str(_cb_err)[:160],
+                            )
+                    logger.info(
+                        "[VAPI_TOOL_TRANSFER_REGISTERED_ONLY_BLOCK] call_id=%s reason=%s urgent=%s callback_created=%s",
+                        call_id[:24] if call_id else "",
+                        _mapped_reason,
+                        _is_urgent,
+                        bool(_cb_id),
+                    )
+                    if _is_urgent:
+                        _block_msg = (
+                            "S'il s'agit d'une urgence vitale, appelez immédiatement le 15 ou le 112. "
+                            "Sinon, je transmets votre demande au cabinet qui vous rappellera au plus vite."
+                        )
+                    else:
+                        _block_msg = (
+                            "Je transmets votre demande au cabinet qui vous rappellera au plus vite."
+                        )
+                    return JSONResponse(th.build_vapi_tool_response(tool_call_id, _block_msg, None), status_code=200)
             _prev_state = getattr(session, "state", "")
             session.state = "TRANSFERRED"
             session.last_transfer_reason = _mapped_reason

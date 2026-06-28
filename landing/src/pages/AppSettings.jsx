@@ -37,6 +37,7 @@ function buildTransferInitialConfig(me) {
     transfer_cases: Array.isArray(me.transfer_cases) ? me.transfer_cases : [],
     hours: me.transfer_hours || {},
     no_consultation: Boolean(me.transfer_no_consultation),
+    registered_only: me.transfer_registered_only !== false,
     practitioner_phone: me.transfer_practitioner_phone || "",
     live_enabled: Boolean(me.transfer_live_enabled),
     callback_enabled: me.transfer_callback_enabled !== false,
@@ -192,6 +193,7 @@ export default function AppSettings() {
               transfer_cases: payload.transfer_cases || [],
               hours: payload.hours || {},
               no_consultation: Boolean(payload.no_consultation),
+              registered_only: payload.registered_only !== false,
               practitioner_phone: transferInitialConfig?.practitioner_phone || "",
               live_enabled: liveEnabled,
               callback_enabled: callbackEnabled,
@@ -206,6 +208,7 @@ export default function AppSettings() {
               transfer_hours: payload.hours || {},
               transfer_always_urgent: payload.always_urgent ? "true" : "false",
               transfer_no_consultation: payload.no_consultation ? "true" : "false",
+              transfer_registered_only: payload.registered_only !== false ? "true" : "false",
               transfer_config_confirmed_signature: buildTransferConfigSignature({
                 phone_number: params.phone_number || "",
                 transfer_number: transferNumber,

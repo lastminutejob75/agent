@@ -99,6 +99,7 @@ function buildInternalConfig(initialConfig, cabinetPhone) {
     transfer_cases: Array.isArray(initialConfig.transfer_cases) ? initialConfig.transfer_cases : [],
     hours: buildDefaultHours(initialConfig.hours),
     no_consultation: Boolean(initialConfig.no_consultation),
+    registered_only: initialConfig.registered_only !== false,
     practitioner_phone: initialConfig.practitioner_phone || "",
     live_enabled: Boolean(initialConfig.live_enabled),
     callback_enabled: initialConfig.callback_enabled !== false,
@@ -500,6 +501,36 @@ function Step3({ data, onChange }) {
         </div>
       </label>
 
+      <label
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 10,
+          padding: "13px 15px",
+          borderRadius: 12,
+          border: `1.5px solid ${data.registered_only !== false ? T.tealBorder : T.border}`,
+          background: data.registered_only !== false ? T.tealLight : T.card,
+          cursor: "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={data.registered_only !== false}
+          onChange={(e) => onChange({ ...data, registered_only: e.target.checked })}
+          style={{ marginTop: 2, width: 16, height: 16, accentColor: T.teal, cursor: "pointer", flexShrink: 0 }}
+        />
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: data.registered_only !== false ? T.tealDark : T.textMid }}>
+            Reserver le transfert aux patients deja enregistres
+          </div>
+          <div style={{ fontSize: 12, color: T.textFaint, marginTop: 3, lineHeight: 1.5 }}>
+            Recommande : votre numero est public. Un appelant inconnu ne vous fera pas sonner ;
+            il laissera un message qui arrivera dans les demandes a traiter. Les patients deja
+            enregistres au cabinet sont transferes normalement.
+          </div>
+        </div>
+      </label>
+
       <div style={{ background: T.bg, border: `1px solid ${T.borderLight}`, borderRadius: 11, padding: "12px 14px" }}>
         <div style={{ fontSize: 12, color: T.textSoft, lineHeight: 1.6 }}>
           En dehors de ces horaires, l'assistante IA continue de repondre aux appels mais ne transferera pas vers votre telephone.
@@ -604,7 +635,7 @@ export default function CallTransferSettings({ cabinetPhone = "", initialConfig 
   const [error, setError] = useState("");
   const [step1, setStep1] = useState({ number: cabinetPhone || "", alwaysUrgent: false });
   const [step2, setStep2] = useState({ transfer_cases: [] });
-  const [step3, setStep3] = useState({ hours: buildDefaultHours(), no_consultation: false });
+  const [step3, setStep3] = useState({ hours: buildDefaultHours(), no_consultation: false, registered_only: true });
   const [advancedConfig, setAdvancedConfig] = useState({ practitioner_phone: "", live_enabled: true, callback_enabled: true });
 
   useEffect(() => {
@@ -614,14 +645,14 @@ export default function CallTransferSettings({ cabinetPhone = "", initialConfig 
       setConfirmedAt("");
       setStep1({ number: cabinetPhone || "", alwaysUrgent: false });
       setStep2({ transfer_cases: [] });
-      setStep3({ hours: buildDefaultHours(), no_consultation: false });
+      setStep3({ hours: buildDefaultHours(), no_consultation: false, registered_only: true });
       setAdvancedConfig({ practitioner_phone: "", live_enabled: true, callback_enabled: true });
       return;
     }
     setConfirmedAt(initialConfig?.confirmed_at || "");
     setStep1({ number: config.main_number, alwaysUrgent: config.always_urgent });
     setStep2({ transfer_cases: config.transfer_cases });
-    setStep3({ hours: config.hours, no_consultation: config.no_consultation });
+    setStep3({ hours: config.hours, no_consultation: config.no_consultation, registered_only: config.registered_only !== false });
     setAdvancedConfig({
       practitioner_phone: config.practitioner_phone || "",
       live_enabled: config.live_enabled !== false,
@@ -651,6 +682,7 @@ export default function CallTransferSettings({ cabinetPhone = "", initialConfig 
         transfer_cases: step2.transfer_cases || [],
         hours: buildDefaultHours(step3.hours),
         no_consultation: Boolean(step3.no_consultation),
+        registered_only: step3.registered_only !== false,
       };
       const result = await onSave?.(payload);
       setConfirmedAt(result?.confirmed_at || new Date().toISOString());
