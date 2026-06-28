@@ -2155,7 +2155,6 @@ async def vapi_tool(request: Request):
                     if _caller_phone:
                         try:
                             from backend.public_bookings_pg import (
-                                _HANDOFF_REASON_TO_CALLBACK,
                                 get_callback_request_by_call_id,
                                 insert_callback_request,
                             )
@@ -2164,16 +2163,19 @@ async def vapi_tool(request: Request):
                                 if call_id else None
                             )
                             if not _existing_cb:
-                                _cb_reason = _HANDOFF_REASON_TO_CALLBACK.get(_mapped_reason, "message")
-                                _cb_msg = (user_message or "").strip() or (
+                                # Demande laissée par un appelant non enregistré : on la classe
+                                # comme "Message au praticien". L'urgence éventuelle est inscrite
+                                # dans le texte pour rester visible côté dashboard (priorité).
+                                _cb_body = (user_message or "").strip() or (
                                     "Demande de mise en relation (appelant non enregistré au cabinet)."
                                 )
+                                _cb_msg = ("Urgence signalée. " + _cb_body) if _is_urgent else _cb_body
                                 _cb_id = insert_callback_request(
                                     tenant_id=resolved_tenant_id,
                                     name=(params.get("patient_name") or None),
                                     phone=_caller_phone,
                                     email=None,
-                                    reason=_cb_reason,
+                                    reason="message",
                                     message=_cb_msg,
                                     appointment_source="vocal",
                                     appointment_id=call_id or None,

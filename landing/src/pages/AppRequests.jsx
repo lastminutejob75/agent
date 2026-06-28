@@ -231,6 +231,7 @@ export default function AppRequests() {
         phone: c.phone || "—",
         createdAtLabel: formatDate(c.created_at),
         source: callbackRequestSourceLabel(c),
+        unknownPatient: Boolean(c.unmatched),
         waitingTime: getWaitingTime(c.created_at),
         createdAt: c.created_at,
         callbackId: c.id,
@@ -615,6 +616,14 @@ export default function AppRequests() {
                       <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, background: typeTone.badgeBg, color: typeTone.badgeText }}>{request.type}</span>
                       <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, background: priorityTone.badgeBg, color: priorityTone.badgeText }}>{request.priority}</span>
                       <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, background: statusBadge.bg, color: statusBadge.color }}>{statusBadge.label}</span>
+                      {request.unknownPatient ? (
+                        <span
+                          title="Appelant non enregistré au cabinet : message laissé, pas de transfert direct."
+                          style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 800, background: "#F1F5F9", color: "#475569", border: "1px solid #CBD5E1" }}
+                        >
+                          Inconnu
+                        </span>
+                      ) : null}
                       {syncedRecently ? (
                         <span style={{ borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 900, background: "#FEF3C7", color: "#92400E" }}>
                           mis à jour

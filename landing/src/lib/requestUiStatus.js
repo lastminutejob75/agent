@@ -93,6 +93,11 @@ export function callbackRequestStatusRaw(callback) {
 export function callbackRequestPriority(callback) {
   const priority = String(callback?.handoff_priority || "").toLowerCase();
   if (priority.includes("urgent")) return "Urgence";
+  // Les demandes laissees par un appelant inconnu n'ont pas de handoff : l'urgence
+  // est portee par le motif ou le texte du message.
+  const reason = String(callback?.reason || "").toLowerCase();
+  const message = String(callback?.message || "").toLowerCase();
+  if (reason.includes("urgen") || message.includes("urgen")) return "Urgence";
   if (priority.includes("low") || priority.includes("faible")) return "Faible";
   return "Standard";
 }
@@ -148,6 +153,7 @@ function mapCallbackRequestRow(callback) {
     createdAtLabel: formatRequestDate(callback.created_at),
     createdAt: callback.created_at,
     source: callbackRequestSourceLabel(callback),
+    unknownPatient: Boolean(callback.unmatched),
     callbackId: callback.id,
     handoffId: callback.handoff_id || null,
     callId: callback.call_id || null,
