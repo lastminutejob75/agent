@@ -537,6 +537,7 @@ function InlineDetail({
   onViewPatientFile,
   onCreatePatientFile,
   onCreateConsultation,
+  onDuplicate,
   variant = "inline",
 }) {
   const aPhone = normalizePhone(a.patient_phone || a.phone || "");
@@ -589,6 +590,9 @@ function InlineDetail({
           >
             👤 Patients
           </button>
+        ) : null}
+        {aPhone && !rescheduleMode && !confirmCancel ? (
+          <button type="button" onClick={() => onDuplicate?.()} style={S.inlineSecBtn}>🗓️ Nouveau RDV pour ce patient</button>
         ) : null}
         {a.canReschedule && !confirmCancel && !rescheduleMode && (
           <button type="button" onClick={onStartReschedule} style={S.inlineRescheduleBtn}>🔄 Déplacer RDV</button>
@@ -1837,6 +1841,22 @@ export default function AppAgenda() {
     setCreateBookingOpen(true);
   }
 
+  function openDuplicateBookingFromAppt(appt) {
+    if (!appt) return;
+    setCreateBookingError("");
+    setCreateBookingForm({
+      patient_name: String(appt.patient || "").trim(),
+      patient_phone: normalizePhone(appt.patient_phone || appt.phone || ""),
+      patient_email: String(appt.patient_email || appt.email || "").trim(),
+      motif: String(appt.type || appt.motif || "Consultation").trim() || "Consultation",
+      booking_date: today,
+      booking_time: pickDefaultCabinetTime(cabinetBookingTimeChoices),
+    });
+    setCreateBookingSuggestions([]);
+    closeAppointmentDetail();
+    setCreateBookingOpen(true);
+  }
+
   function applyCreateBookingPatient(p) {
     if (!p) return;
     const display = (p.display_name || p.validated_name || p.raw_name || "").trim();
@@ -2898,6 +2918,7 @@ export default function AppAgenda() {
                   onViewPatientFile={viewPatientFileFromSelectedAppt}
                   onCreatePatientFile={() => openCreatePatientFormFromAppt(selectedAppt)}
                   onCreateConsultation={() => openConsultationSheetFromSelectedAppt(selectedAppt)}
+                  onDuplicate={() => openDuplicateBookingFromAppt(selectedAppt)}
                 />
               </>
             )}
