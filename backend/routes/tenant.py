@@ -3296,6 +3296,17 @@ def tenant_calls(
         }
     if compact_mode:
         calls = []
+        # Reconnaissance des numéros : on associe chaque appel à une fiche
+        # patient (cabinet_clients) via le téléphone, comme en mode complet.
+        _phones_compact = list(dict.fromkeys(
+            p for p in (normalize_phone_number(it.get("customer_number") or "") for it in items) if p
+        ))
+        try:
+            patient_profiles_compact = (
+                get_cabinet_clients_by_phones(tenant_id, _phones_compact) if _phones_compact else {}
+            )
+        except Exception:
+            patient_profiles_compact = {}
         for item in items:
             call_id = (item.get("call_id") or "").strip()
             if not call_id:
@@ -3316,6 +3327,7 @@ def tenant_calls(
             status = _resolve_call_status(item, detail_for_display)
             booking = _build_booking_payload(detail_for_display)
             call_context = _classify_call_context(status, detail_for_display)
+            patient = _build_patient_payload(tenant_id, item, detail_for_display, patient_profiles_compact)
             resolved_duration_sec = detail_for_display.get("duration_sec")
             if resolved_duration_sec is None:
                 raw_minutes = detail_for_display.get("duration_min")
@@ -3339,21 +3351,13 @@ def tenant_calls(
                 "time": _format_hhmm(started_at, tz_name),
                 "duration": _format_duration_short(resolved_duration_sec),
                 "duration_sec": resolved_duration_sec,
-                "patient_name": "Patient",
+                "patient_name": patient.get("display_name") or "Patient",
                 "customer_number": _call_display_phone(item, detail_for_display),
                 "agent_name": assistant_name,
                 "summary": _call_summary_from_detail(status, detail_for_display),
                 "status": status,
                 "call_id": call_id,
-                "patient": {
-                    "raw_name": "",
-                    "validated_name": "",
-                    "display_name": "Patient",
-                    "validation_status": "pending",
-                    "profile_exists": False,
-                    "is_validated": False,
-                    "phone": item.get("customer_number") or "",
-                },
+                "patient": patient,
                 "booking": booking,
                 "followup_state": "new",
                 "followup_notes": "",
