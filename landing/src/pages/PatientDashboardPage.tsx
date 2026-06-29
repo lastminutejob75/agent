@@ -2860,6 +2860,13 @@ export default function PatientDashboardPage() {
         >
           ♲ Annuler le RDV
         </button>
+        <button
+          type="button"
+          onClick={() => setCreatePatientBookingOpen(true)}
+          className="rounded-xl border border-[#72CDE0] px-4 py-2 text-sm font-black text-[#008EA1] hover:bg-[#E9FAFC]"
+        >
+          🗓️ Nouveau RDV pour ce patient
+        </button>
         {!compact ? (
           <button
             type="button"
@@ -2879,7 +2886,7 @@ export default function PatientDashboardPage() {
         )}
       </div>
     );
-  }, [notify, openCancelApptModal, openRescheduleApptModal, viewApptInAgenda]);
+  }, [notify, openCancelApptModal, openRescheduleApptModal, viewApptInAgenda, setCreatePatientBookingOpen]);
 
   const patientAgendaSlots = useMemo(() => {
     if (!tenantPatientPhone) return [];
