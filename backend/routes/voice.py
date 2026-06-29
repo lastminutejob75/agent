@@ -1032,6 +1032,43 @@ def _maybe_inbound_forward_destination(payload: Optional[dict]) -> Optional[JSON
         return None
 
 
+def _personalized_first_message(payload: Optional[dict]) -> str:
+    """Salutation personnalisée si l'appelant est un patient déjà enregistré.
+
+    Retourne "" pour un numéro inconnu (on garde alors le firstMessage habituel).
+    """
+    try:
+        from backend.tenant_routing import (
+            extract_customer_phone_from_vapi_payload,
+            resolve_tenant_id_from_vapi_payload,
+        )
+        from backend.registered_patient_access import find_registered_patient
+
+        phone = extract_customer_phone_from_vapi_payload(payload or {})
+        if not phone:
+            return ""
+        tenant_id, _src = resolve_tenant_id_from_vapi_payload(payload or {}, channel="vocal")
+        if not tenant_id:
+            return ""
+        profile = find_registered_patient(int(tenant_id), phone=phone)
+        if not profile:
+            return ""
+        name = ""
+        for key in ("display_name", "validated_name", "raw_name"):
+            value = str(profile.get(key) or "").strip()
+            if value:
+                name = value
+                break
+        if not name:
+            return ""
+        if name == name.lower():
+            name = name.title()
+        return f"Bonjour {name}, je suis Chloé. Comment puis-je vous aider ?"
+    except Exception as exc:
+        logger.warning("assistant-request: personalized greeting failed err=%s", str(exc)[:160])
+        return ""
+
+
 def _vapi_assistant_request_response(payload: Optional[dict] = None) -> JSONResponse:
     """
     Réponse pour message.type === "assistant-request".
@@ -1042,6 +1079,9 @@ def _vapi_assistant_request_response(payload: Optional[dict] = None) -> JSONResp
     forward = _maybe_inbound_forward_destination(payload)
     if forward is not None:
         return forward
+    # Patient connu → salutation nominative ("Bonjour {nom}, ...") via assistantOverrides.
+    # Numéro inconnu → greeting "" (on conserve le firstMessage par défaut de l'assistant).
+    personalized_greeting = _personalized_first_message(payload)
     # Mode agent : renvoyer en priorité l'assistant Vapi DU CABINET (résolu par DID),
     # sinon l'assistant global (VAPI_ASSISTANT_ID), sinon un assistant transient.
     tenant_assistant_id = ""
@@ -1054,11 +1094,14 @@ def _vapi_assistant_request_response(payload: Optional[dict] = None) -> JSONResp
             params = get_params(tenant_id) or {}
             tenant_assistant_id = (params.get("vapi_assistant_id") or "").strip()
             if tenant_assistant_id:
+                content = {"assistantId": tenant_assistant_id}
+                if personalized_greeting:
+                    content["assistantOverrides"] = {"firstMessage": personalized_greeting}
                 logger.info(
-                    "assistant-request: tenant=%s(%s) assistantId=%s (per-tenant)",
-                    tenant_id, route_src, tenant_assistant_id[:24],
+                    "assistant-request: tenant=%s(%s) assistantId=%s (per-tenant) personalized=%s",
+                    tenant_id, route_src, tenant_assistant_id[:24], bool(personalized_greeting),
                 )
-                return JSONResponse(content={"assistantId": tenant_assistant_id}, status_code=200)
+                return JSONResponse(content=content, status_code=200)
     except Exception as exc:
         logger.warning("assistant-request: per-tenant lookup failed err=%s", str(exc)[:160])
 
@@ -1066,7 +1109,10 @@ def _vapi_assistant_request_response(payload: Optional[dict] = None) -> JSONResp
     # Log pour vérifier que la variable est bien chargée (Railway: Variables → Service, puis Redeploy)
     logger.info("assistant-request: VAPI_ASSISTANT_ID=%s", os.environ.get("VAPI_ASSISTANT_ID") or "(empty)")
     if assistant_id:
-        return JSONResponse(content={"assistantId": assistant_id}, status_code=200)
+        content = {"assistantId": assistant_id}
+        if personalized_greeting:
+            content["assistantOverrides"] = {"firstMessage": personalized_greeting}
+        return JSONResponse(content=content, status_code=200)
     # Fallback: assistant transient (firstMessage FR + Custom LLM vers notre backend)
     base = ""
     try:
@@ -1077,7 +1123,7 @@ def _vapi_assistant_request_response(payload: Optional[dict] = None) -> JSONResp
         logger.warning("VAPI_ASSISTANT_ID and VAPI_PUBLIC_BACKEND_URL unset: assistant-request returns transient with openai fallback")
     chat_url = f"{base}/api/vapi/chat/completions" if base else ""
     assistant = {
-        "firstMessage": "Bonjour, vous appelez pour un rendez-vous ?",
+        "firstMessage": personalized_greeting or "Bonjour, vous appelez pour un rendez-vous ?",
         "model": (
             {"provider": "custom-llm", "url": chat_url, "model": "gpt-4o-mini"}
             if chat_url
