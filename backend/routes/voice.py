@@ -2283,6 +2283,56 @@ async def vapi_tool(request: Request):
                 call_id[:24] if call_id else "",
                 session.last_transfer_reason,
             )
+            # Le transfert live n'a pas pu se faire : pour ne JAMAIS perdre la demande,
+            # on l'enregistre comme "demande à traiter" (callback_request). Sans ça,
+            # un patient connu (hors heures de transfert) s'entendait dire "on vous
+            # rappellera" sans qu'aucune trace ne soit créée côté dashboard.
+            _fb_cb_created = False
+            try:
+                from backend.tenant_routing import extract_customer_phone_from_vapi_payload
+                from backend.registered_patient_access import find_registered_patient
+                from backend.public_bookings_pg import (
+                    get_callback_request_by_call_id,
+                    insert_callback_request,
+                )
+                _fb_phone = extract_customer_phone_from_vapi_payload(payload)
+                _fb_existing = (
+                    get_callback_request_by_call_id(resolved_tenant_id, call_id)
+                    if call_id else None
+                )
+                if _fb_phone and not _fb_existing:
+                    _fb_unmatched = (
+                        find_registered_patient(resolved_tenant_id, phone=_fb_phone) is None
+                    )
+                    _fb_is_urgent = _mapped_reason == "urgent_non_vital_case"
+                    _fb_body = (user_message or "").strip() or (
+                        "Demande de mise en relation (transfert indisponible)."
+                    )
+                    _fb_msg = ("Urgence signalée. " + _fb_body) if _fb_is_urgent else _fb_body
+                    _fb_cb_created = bool(insert_callback_request(
+                        tenant_id=resolved_tenant_id,
+                        name=(params.get("patient_name") or None),
+                        phone=_fb_phone,
+                        email=None,
+                        reason="message",
+                        message=_fb_msg,
+                        appointment_source="vocal",
+                        appointment_id=call_id or None,
+                        unmatched=_fb_unmatched,
+                        source="vocal_agent",
+                        call_id=call_id or None,
+                    ))
+            except Exception as _fb_err:
+                logger.warning(
+                    "[VAPI_TOOL_TRANSFER_FALLBACK_CALLBACK_FAILED] call_id=%s err=%s",
+                    call_id[:24] if call_id else "",
+                    str(_fb_err)[:160],
+                )
+            logger.info(
+                "[VAPI_TOOL_TRANSFER_FALLBACK_CALLBACK] call_id=%s created=%s",
+                call_id[:24] if call_id else "",
+                _fb_cb_created,
+            )
             fallback_text = (
                 "Je ne peux pas vous mettre en relation tout de suite, "
                 "mais je transmets votre demande au cabinet qui vous rappellera au plus vite."
