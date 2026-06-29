@@ -1,5 +1,17 @@
 /** Identifiant API pour annuler / déplacer un RDV agenda. */
 
+import { parseAgendaSlotStart } from "./agendaSlotParse.js";
+
+/**
+ * Vrai si l'heure de début du créneau est connue ET déjà passée.
+ * Si le début n'est pas déterminable, on ne bloque pas (comportement historique).
+ */
+function isSlotStartPast(slot, now) {
+  const start = parseAgendaSlotStart(slot);
+  if (!start) return false;
+  return start.getTime() < now;
+}
+
 export function appointmentActionId(slot) {
   const localId = appointmentLocalId(slot);
   if (localId) return String(localId);
@@ -37,14 +49,18 @@ export function agendaReschedulePayload(slot, newSlotId) {
   };
 }
 
-export function canCancelAgendaSlot(slot) {
+export function canCancelAgendaSlot(slot, now = Date.now()) {
+  // Un rendez-vous déjà passé ne peut plus être annulé.
+  if (isSlotStartPast(slot, now)) return false;
   if (slot?.can_cancel === true) return true;
   const src = String(slot?.source || "").toUpperCase();
   if (src !== "UWI" && src !== "PAGE_PUBLIQUE") return false;
   return Boolean(appointmentActionId(slot) || appointmentGoogleEventId(slot));
 }
 
-export function canRescheduleAgendaSlot(slot) {
+export function canRescheduleAgendaSlot(slot, now = Date.now()) {
+  // Un rendez-vous déjà passé ne peut plus être déplacé.
+  if (isSlotStartPast(slot, now)) return false;
   if (slot?.can_reschedule === true) return true;
   const apptId = appointmentLocalId(slot);
   const slotId = Number(slot?.slot_id);
@@ -62,7 +78,7 @@ export function isAgendaSlotPast(startDate, now = Date.now()) {
 /** Ouvre le flux « déplacer » (calendrier) depuis la fiche patient. */
 export function canOpenReschedulePatientAppt(slot, startDate, now = Date.now()) {
   if (isAgendaSlotPast(startDate, now)) return false;
-  if (canRescheduleAgendaSlot(slot)) return true;
+  if (canRescheduleAgendaSlot(slot, now)) return true;
   const src = String(slot?.source || "").toUpperCase();
   return src === "UWI" && Boolean(appointmentActionId(slot));
 }
