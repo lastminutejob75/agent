@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { sanitizePhoneInput } from "../../lib/transferConfig.js";
+import NoteDictateButton from "../notes/NoteDictateButton.jsx";
 
 function fieldInputClass(hasError) {
   return `rounded-xl border px-3 py-2 text-sm outline-none focus:border-[#009CA4] ${
@@ -28,6 +30,7 @@ export default function CreatePatientFromCallModal({
   emailRequired = false,
   extendedProfile = false,
 }) {
+  const [noteDictError, setNoteDictError] = useState("");
   if (!open) return null;
   if (!embedded && typeof document === "undefined") return null;
 
@@ -160,12 +163,22 @@ export default function CreatePatientFromCallModal({
       ) : null}
 
       <label className="mt-3 flex flex-col gap-1 text-sm font-semibold text-[#334155]">
-        Note initiale
+        <span className="flex items-center justify-between gap-2">
+          Note initiale
+          <NoteDictateButton
+            value={form.initialNote}
+            onChange={(next) => { setNoteDictError(""); onChange("initialNote", next); }}
+            onError={(msg) => setNoteDictError(msg || "")}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#6941C6] bg-white px-2.5 py-1 text-xs font-black text-[#5B34B0] transition hover:bg-[#F4F3FF] disabled:opacity-60"
+          />
+        </span>
         <textarea
           value={form.initialNote}
           onChange={(event) => onChange("initialNote", event.target.value)}
+          placeholder="Écrivez ou dictez la note..."
           className="h-24 resize-none rounded-xl border border-[#E2E8F0] px-3 py-2 text-sm outline-none focus:border-[#009CA4]"
         />
+        {noteDictError ? <span className="text-xs font-semibold text-red-600">{noteDictError}</span> : null}
       </label>
 
       <div className="mt-2 text-xs text-[#64748B]">{subtitleLine}</div>

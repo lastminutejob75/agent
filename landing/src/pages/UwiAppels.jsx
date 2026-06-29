@@ -27,6 +27,7 @@ import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCal
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import { api } from "../lib/api.js";
 import { useCalls } from "../lib/useCalls.js";
+import { useNoteDictation, appendDictatedText } from "../lib/useNoteDictation.js";
 import { canCreatePatientFromCall, getCallCounts } from "../lib/callJournal.utils.js";
 import {
   buildCallPatientApiPayload,
@@ -567,6 +568,11 @@ function PanelAction({ icon: Icon, label, right, variant = "default", onClick, a
 function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHandled, onAddNote, compact = false }) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
+  const [noteDictError, setNoteDictError] = useState("");
+  const noteDictation = useNoteDictation({
+    onText: (text) => setNoteDraft((prev) => appendDictatedText(prev, text)),
+    onError: (msg) => setNoteDictError(msg || ""),
+  });
   if (!call) return <EmptyDetail compact={compact} />;
 
   const canCreatePatient = canCreatePatientFromCall(call);
@@ -804,10 +810,38 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
             <PanelAction icon={PenLine} label="Ajouter une note" onClick={() => setNoteOpen((prev) => !prev)} />
             {noteOpen ? (
               <div style={{ borderRadius: 12, border: `1px solid ${C.line}`, padding: 10, background: C.white }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: C.muted }}>Écrivez ou dictez la note</span>
+                  {noteDictation.supported ? (
+                    <button
+                      type="button"
+                      onClick={() => { setNoteDictError(""); noteDictation.toggle(); }}
+                      disabled={noteDictation.transcribing}
+                      aria-pressed={noteDictation.recording}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        borderRadius: 8,
+                        border: `1px solid ${noteDictation.recording ? C.red : "#6941C6"}`,
+                        background: noteDictation.recording ? C.redSoft : C.white,
+                        color: noteDictation.recording ? C.red : "#5B34B0",
+                        padding: "6px 10px",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: noteDictation.transcribing ? "default" : "pointer",
+                        opacity: noteDictation.transcribing ? 0.6 : 1,
+                      }}
+                    >
+                      <Mic2 size={13} />
+                      {noteDictation.transcribing ? "Transcription…" : noteDictation.recording ? "Arrêter" : "Dicter"}
+                    </button>
+                  ) : null}
+                </div>
                 <textarea
                   value={noteDraft}
                   onChange={(event) => setNoteDraft(event.target.value)}
-                  placeholder="Ajouter une note..."
+                  placeholder="Ajouter une note... (ou dictez-la à la voix)"
                   style={{
                     width: "100%",
                     minHeight: 72,
@@ -819,9 +853,19 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
                     outline: "none",
                   }}
                 />
+                {noteDictation.recording ? (
+                  <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: C.red }}>
+                    Dictée en cours… parlez, puis cliquez sur « Arrêter ».
+                  </div>
+                ) : noteDictation.transcribing ? (
+                  <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: C.teal }}>Transcription en cours…</div>
+                ) : noteDictError ? (
+                  <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: C.red }}>{noteDictError}</div>
+                ) : null}
                 <button
                   type="button"
                   onClick={handleSaveNote}
+                  disabled={noteDictation.recording || noteDictation.transcribing}
                   style={{
                     marginTop: 8,
                     width: "100%",
@@ -832,7 +876,8 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
                     fontSize: 12,
                     fontWeight: 700,
                     color: C.navy,
-                    cursor: "pointer",
+                    cursor: noteDictation.recording || noteDictation.transcribing ? "default" : "pointer",
+                    opacity: noteDictation.recording || noteDictation.transcribing ? 0.6 : 1,
                   }}
                 >
                   Enregistrer la note

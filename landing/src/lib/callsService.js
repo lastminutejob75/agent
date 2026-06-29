@@ -193,10 +193,15 @@ export async function addCallNote(callId, note) {
   const text = String(note || "").trim();
   if (!text) throw new Error("La note est vide.");
   const phone = normalizePhone(detail?.patient?.phone || detail?.customer_number || "");
-  const validated = String(detail?.patient?.validated_name || "").trim();
-  const knownPatient = validated.length >= 2;
-  if (knownPatient && phone) {
-    return api.tenantCreatePatientNote(phone, { text, author: "Cabinet" });
+  // La note doit TOUJOURS enrichir la fiche patient quand une fiche existe pour
+  // ce numéro. On tente donc la note patient dès qu'un téléphone est dispo ;
+  // si aucune fiche n'existe (404), on retombe sur la note de suivi d'appel.
+  if (phone) {
+    try {
+      return await api.tenantCreatePatientNote(phone, { text, author: "Cabinet" });
+    } catch {
+      /* pas de fiche patient pour ce numéro -> note de suivi ci-dessous */
+    }
   }
   const previousNotes = String(detail?.followup_notes || "").trim();
   const merged = previousNotes ? `${previousNotes}\n${text}` : text;
