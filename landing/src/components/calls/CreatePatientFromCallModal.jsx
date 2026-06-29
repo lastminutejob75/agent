@@ -35,8 +35,12 @@ export default function CreatePatientFromCallModal({
     onChange("phone", sanitizePhoneInput(event.target.value));
   };
 
+  const footerClass = embedded
+    ? "mt-5 flex items-center justify-end gap-2"
+    : "sticky bottom-0 -mx-5 -mb-5 mt-5 flex items-center justify-end gap-2 border-t border-[#E2E8F0] bg-white px-5 py-3";
+
   const panel = (
-    <div className={embedded ? "px-4 pb-4" : "w-full max-w-[560px] rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-2xl"}>
+    <div className={embedded ? "px-4 pb-4" : "flex max-h-[88dvh] w-full max-w-[560px] flex-col overflow-y-auto rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-2xl"}>
       <div className="mb-4 flex items-center justify-between">
         <h3 id="create-patient-from-call-heading" className="text-lg font-black text-[#0A1628]">
           Créer une fiche patient
@@ -166,7 +170,7 @@ export default function CreatePatientFromCallModal({
 
       <div className="mt-2 text-xs text-[#64748B]">{subtitleLine}</div>
 
-      <div className="mt-5 flex items-center justify-end gap-2">
+      <div className={footerClass}>
         <button
           type="button"
           onClick={onClose}
@@ -190,7 +194,7 @@ export default function CreatePatientFromCallModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-[#0A1628]/50 p-4"
+      className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-[#0A1628]/60 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="create-patient-from-call-heading"

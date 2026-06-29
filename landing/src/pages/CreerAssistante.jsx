@@ -693,12 +693,12 @@ function ContactModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4 bg-slate-900/40 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Recevez votre numéro de test"
     >
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-2xl max-w-md w-full p-6 relative">
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-2xl max-w-md w-full p-6 relative max-h-[90dvh] overflow-y-auto">
         <button
           type="button"
           onClick={onClose}

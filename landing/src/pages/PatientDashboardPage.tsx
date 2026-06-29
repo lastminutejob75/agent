@@ -6104,12 +6104,12 @@ export default function PatientDashboardPage() {
 
       {patientBookingConfirm ? (
         <div
-          className="fixed inset-0 z-[130] flex items-end justify-center bg-[#0A1628]/45 p-4 sm:items-center"
+          className="fixed inset-0 z-[130] flex items-end justify-center overflow-y-auto bg-[#0A1628]/45 p-4 sm:items-center"
           role="dialog"
           aria-modal="true"
           aria-labelledby="patient-booking-confirm-title"
         >
-          <div className="w-full max-w-md rounded-[24px] border border-[#E2EAF4] bg-white p-6 text-center shadow-[0_24px_60px_rgba(10,22,40,0.18)]">
+          <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-[24px] border border-[#E2EAF4] bg-white p-6 text-center shadow-[0_24px_60px_rgba(10,22,40,0.18)]">
             <div
               className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-[#EAF8EF] text-2xl font-black text-[#16A34A]"
               aria-hidden
