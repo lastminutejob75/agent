@@ -67,6 +67,8 @@ export default function AppSettings() {
           timezone: me.timezone || "Europe/Paris",
           calendar_id: me.calendar_id || "",
           phone_number: me.phone_number || "",
+          notify_requests_sms: me.notify_requests_sms !== false,
+          notification_phone: me.notification_phone || "",
         });
         setTransferInitialConfig(buildTransferInitialConfig(me));
       })
@@ -79,7 +81,10 @@ export default function AppSettings() {
     setSaved(false);
     setLoading(true);
     try {
-      await api.tenantPatchParams(params);
+      await api.tenantPatchParams({
+        ...params,
+        notify_requests_sms: params.notify_requests_sms !== false ? "true" : "false",
+      });
       setSaved(true);
     } catch (e) {
       setErr(e.message || "Erreur");
@@ -167,6 +172,31 @@ export default function AppSettings() {
             placeholder="Optionnel"
             className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900"
           />
+        </div>
+        <div className="border-t border-gray-100 pt-4">
+          <h3 className="text-base font-semibold text-gray-900">Alertes « Demandes à traiter »</h3>
+          <p className="mt-1 text-sm text-gray-600">
+            Recevez un SMS dès qu'une nouvelle demande / message arrive (les urgences sont signalées).
+          </p>
+          <label className="mt-3 flex items-center gap-3 text-sm font-medium text-gray-700">
+            <input
+              type="checkbox"
+              checked={params.notify_requests_sms !== false}
+              onChange={(e) => setParams((p) => ({ ...p, notify_requests_sms: e.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            Activer les alertes SMS
+          </label>
+          <div className="mt-3">
+            <label className="block text-sm font-medium text-gray-700">Numéro pour les alertes (optionnel)</label>
+            <input
+              type="tel"
+              value={params.notification_phone || ""}
+              onChange={(e) => setParams((p) => ({ ...p, notification_phone: sanitizePhoneInput(e.target.value) }))}
+              placeholder="Par défaut : votre numéro de transfert"
+              className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900"
+            />
+          </div>
         </div>
         {saved && <p className="text-sm text-emerald-600">Paramètres enregistrés.</p>}
         <button
