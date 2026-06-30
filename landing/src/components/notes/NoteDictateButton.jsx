@@ -1,18 +1,22 @@
-import { useNoteDictation, appendDictatedText } from "../../lib/useNoteDictation.js";
+import { useNoteDictation, appendDictatedText, formatDictationElapsed } from "../../lib/useNoteDictation.js";
 
 /**
  * Bouton « Dicter » (tailwind) branché sur un champ note.
  * Concatène le texte transcrit à `value` via `onChange`.
  */
 export default function NoteDictateButton({ value, onChange, onError, disabled = false, className = "" }) {
-  const { recording, transcribing, supported, toggle } = useNoteDictation({
+  const { recording, transcribing, supported, toggle, elapsedMs } = useNoteDictation({
     onText: (text) => onChange?.(appendDictatedText(value, text)),
     onError,
   });
 
   if (!supported) return null;
 
-  const label = transcribing ? "Transcription…" : recording ? "Arrêter la dictée" : "Dicter";
+  const label = transcribing
+    ? "Transcription…"
+    : recording
+      ? `Arrêter · ${formatDictationElapsed(elapsedMs)}`
+      : "Dicter";
 
   return (
     <button

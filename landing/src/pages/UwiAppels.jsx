@@ -27,7 +27,7 @@ import CreatePatientFromCallModal from "../components/calls/CreatePatientFromCal
 import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanner.jsx";
 import { api } from "../lib/api.js";
 import { useCalls } from "../lib/useCalls.js";
-import { useNoteDictation, appendDictatedText } from "../lib/useNoteDictation.js";
+import { useNoteDictation, appendDictatedText, formatDictationElapsed } from "../lib/useNoteDictation.js";
 import { canCreatePatientFromCall, getCallCounts } from "../lib/callJournal.utils.js";
 import {
   buildCallPatientApiPayload,
@@ -866,6 +866,25 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
                     </button>
                   ) : null}
                 </div>
+                {noteDictation.recording ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: C.red, fontVariantNumeric: "tabular-nums" }}>
+                      {formatDictationElapsed(noteDictation.elapsedMs)}
+                    </span>
+                    <span style={{ position: "relative", flex: 1, height: 6, borderRadius: 99, background: C.lineSoft, overflow: "hidden" }}>
+                      <span
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: `${Math.round(noteDictation.level * 100)}%`,
+                          background: C.red,
+                          borderRadius: 99,
+                          transition: "width 0.08s linear",
+                        }}
+                      />
+                    </span>
+                  </div>
+                ) : null}
                 <textarea
                   value={noteDraft}
                   onChange={(event) => setNoteDraft(event.target.value)}
@@ -889,6 +908,12 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
                   <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: C.teal }}>Transcription en cours…</div>
                 ) : noteDictError ? (
                   <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: C.red }}>{noteDictError}</div>
+                ) : null}
+                {!noteDictation.recording && !noteDictation.transcribing && noteDictation.lastAudioUrl ? (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 4 }}>Réécouter la dictée</div>
+                    <audio src={noteDictation.lastAudioUrl} controls style={{ width: "100%", height: 34 }} />
+                  </div>
                 ) : null}
                 <button
                   type="button"
