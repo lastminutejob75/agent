@@ -286,7 +286,27 @@ function RowAction({ call, onPrimaryAction }) {
   );
 }
 
-function CallRow({ call, selected, onSelect, onPrimaryAction, compact = false }) {
+function CallGroupBadge({ count }) {
+  if (!count || count < 2) return null;
+  return (
+    <span
+      style={{
+        flexShrink: 0,
+        borderRadius: 99,
+        background: C.tealSoft,
+        color: C.tealDark,
+        padding: "1px 7px",
+        fontSize: 11,
+        fontWeight: 800,
+        lineHeight: 1.6,
+      }}
+    >
+      {count} appels
+    </span>
+  );
+}
+
+function CallRow({ call, selected, onSelect, onPrimaryAction, compact = false, groupCount = 1 }) {
   const isSelected = selected?.id === call.id;
 
   if (compact) {
@@ -314,15 +334,19 @@ function CallRow({ call, selected, onSelect, onPrimaryAction, compact = false })
             <div style={{ minWidth: 0 }}>
               <div
                 style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                   fontSize: 14,
                   fontWeight: 700,
                   color: C.navy,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  minWidth: 0,
                 }}
               >
-                {call.patient.name}
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {call.patient.name}
+                </span>
+                <CallGroupBadge count={groupCount} />
               </div>
               <div
                 style={{
@@ -397,15 +421,19 @@ function CallRow({ call, selected, onSelect, onPrimaryAction, compact = false })
         <div style={{ minWidth: 0 }}>
           <div
             style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
               fontSize: 14,
               fontWeight: 700,
               color: C.navy,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              minWidth: 0,
             }}
           >
-            {call.patient.name}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {call.patient.name}
+            </span>
+            <CallGroupBadge count={groupCount} />
           </div>
           <div
             style={{
@@ -894,6 +922,35 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
   );
 }
 
+function exportCallsToCsv(calls) {
+  const rows = [["Date", "Heure", "Patient", "Téléphone", "Type", "Statut", "Résumé"]];
+  for (const call of calls || []) {
+    rows.push([
+      call.date || "",
+      call.time || "",
+      call.patient?.name || "",
+      call.patient?.phone || "",
+      call.type || "",
+      call.status || "",
+      String(call.summary || "").replace(/\s+/g, " ").trim(),
+    ]);
+  }
+  const escape = (value) => {
+    const s = String(value ?? "");
+    return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = "\uFEFF" + rows.map((r) => r.map(escape).join(";")).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `appels-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export default function UwiAppels() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -902,6 +959,7 @@ export default function UwiAppels() {
   const [selectedCall, setSelectedCall] = useState(null);
   const [query, setQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState({});
   const [compactFilters, setCompactFilters] = useState(
     typeof window !== "undefined" ? window.innerWidth < 1024 : false,
   );
@@ -991,6 +1049,28 @@ export default function UwiAppels() {
           .includes(q);
       });
   }, [activeTab, query, calls, subFilters]);
+
+  // Regroupe les appels consécutifs d'un même numéro (ex. un inconnu qui
+  // rappelle 3 fois) en une seule ligne dépliable, pour réduire le bruit.
+  const groupedCalls = useMemo(() => {
+    const groups = [];
+    let lastKey = null;
+    for (const call of filteredCalls) {
+      const phone = normalizePhone(call.patient?.phone || call.phone || "");
+      const key = phone && !call.patient?.masked ? `tel:${phone}` : `solo:${call.id}`;
+      if (key === lastKey && groups.length) {
+        groups[groups.length - 1].items.push(call);
+      } else {
+        groups.push({ key, lead: call, items: [call] });
+        lastKey = key;
+      }
+    }
+    return groups.map((g) => ({ ...g, count: g.items.length }));
+  }, [filteredCalls]);
+
+  const toggleGroup = useCallback((key) => {
+    setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const activeFilterCount = useMemo(
     () => Object.values(subFilters).filter((value) => value !== "all").length,
@@ -1749,6 +1829,31 @@ export default function UwiAppels() {
               <span style={{ fontSize: 12, fontWeight: 600, color: C.subtle }}>
                 {filteredCalls.length} appel{filteredCalls.length !== 1 ? "s" : ""}
               </span>
+              {filteredCalls.length > 0 ? (
+                <Hoverable
+                  as="button"
+                  type="button"
+                  onClick={() => exportCallsToCsv(filteredCalls)}
+                  style={{
+                    marginLeft: "auto",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    border: `1px solid ${C.line}`,
+                    borderRadius: 8,
+                    background: C.white,
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: C.navy,
+                    cursor: "pointer",
+                  }}
+                  hoverStyle={{ background: C.surface }}
+                >
+                  <FileText size={14} />
+                  Exporter (CSV)
+                </Hoverable>
+              ) : null}
             </div>
 
             <div
@@ -1788,16 +1893,61 @@ export default function UwiAppels() {
               {loading ? (
                 <div style={{ padding: "24px", fontSize: 13, color: C.muted }}>Chargement des appels...</div>
               ) : (
-                filteredCalls.map((call) => (
-                  <CallRow
-                    key={call.id}
-                    call={call}
-                    selected={selectedCall}
-                    onSelect={handleSelect}
-                    onPrimaryAction={handlePrimaryAction}
-                    compact={compactHeader}
-                  />
-                ))
+                groupedCalls.map((group) => {
+                  const extra = group.count - 1;
+                  const expanded = Boolean(expandedGroups[group.key]);
+                  return (
+                    <div key={group.lead.id}>
+                      <CallRow
+                        call={group.lead}
+                        selected={selectedCall}
+                        onSelect={handleSelect}
+                        onPrimaryAction={handlePrimaryAction}
+                        compact={compactHeader}
+                        groupCount={group.count}
+                      />
+                      {extra > 0 ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => toggleGroup(group.key)}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              width: "100%",
+                              padding: "8px 20px",
+                              border: "none",
+                              borderTop: `1px dashed ${C.line}`,
+                              background: C.surface,
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: C.teal,
+                              cursor: "pointer",
+                            }}
+                          >
+                            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            {expanded
+                              ? "Masquer les autres appels"
+                              : `${extra} autre${extra > 1 ? "s" : ""} appel${extra > 1 ? "s" : ""} de ce numéro`}
+                          </button>
+                          {expanded
+                            ? group.items.slice(1).map((c) => (
+                                <CallRow
+                                  key={c.id}
+                                  call={c}
+                                  selected={selectedCall}
+                                  onSelect={handleSelect}
+                                  onPrimaryAction={handlePrimaryAction}
+                                  compact={compactHeader}
+                                />
+                              ))
+                            : null}
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                })
               )}
 
               {!loading && filteredCalls.length === 0 && (
