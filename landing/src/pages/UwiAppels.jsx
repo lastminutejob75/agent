@@ -1145,6 +1145,23 @@ export default function UwiAppels() {
         }
       }
 
+      // Recopie la note déjà saisie sur l'appel (avant création de la fiche)
+      // vers la nouvelle fiche patient, puis vide la note de suivi de l'appel
+      // pour qu'aucune note ne reste « bloquée » côté appel.
+      try {
+        const callDetail = await api.tenantGetCallDetail(currentCallId);
+        const existingCallNote = String(callDetail?.followup_notes || "").trim();
+        if (existingCallNote && existingCallNote !== noteText) {
+          await api.tenantCreatePatientNote(linkedPhone, { text: existingCallNote, author: "Cabinet" });
+          await api.tenantUpdateCallFollowup(currentCallId, {
+            followup_state: callDetail?.followup_state || "new",
+            notes: "",
+          });
+        }
+      } catch {
+        /* best-effort : en cas d'échec la note reste consultable côté appel */
+      }
+
       await api.tenantGetPatient(linkedPhone);
       setCreateModalOpen(false);
       setCreateConflicts([]);
