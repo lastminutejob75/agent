@@ -29,6 +29,7 @@ import PatientDashboardMobile from "./PatientDashboardMobile";
 import { normalizePhoneBusinessKey } from "../lib/phoneNormalize";
 import { validatePatientPhone, validateContactEmail, isValidContactEmail } from "../lib/contactValidation.js";
 import { patientDashboardFileHasValidatedIdentity } from "../lib/callsService.js";
+import { NOTE_TAGS, prependNoteTag, parseNoteTags, noteTagByLabel } from "../lib/noteTags.js";
 import {
   formatBirthDateWithAge,
   formatPhysicianWithCity,
@@ -5111,7 +5112,9 @@ export default function PatientDashboardPage() {
                             const isEditing = noteEditingId === item.id;
                             const isExpanded = Boolean(noteExpandedIds[item.id]);
                             const rawText = String(item.text || "");
-                            const hasOverflow = rawText.length > PATIENT_NOTE_PREVIEW_LIMIT;
+                            const parsedNote = parseNoteTags(rawText);
+                            const bodyText = parsedNote.text;
+                            const hasOverflow = bodyText.length > PATIENT_NOTE_PREVIEW_LIMIT;
                             return (
                               <div key={item.id} className="border-b border-white/20 pb-4">
                                 {isEditing ? (
@@ -5145,7 +5148,25 @@ export default function PatientDashboardPage() {
                                   </div>
                                 ) : (
                                   <>
-                                    <div className="text-base font-semibold">♡ {isExpanded ? rawText : previewPatientNoteText(rawText)}</div>
+                                    <div className="text-base font-semibold">
+                                      {parsedNote.tags.length ? (
+                                        <span className="mr-2 inline-flex flex-wrap gap-1 align-middle">
+                                          {parsedNote.tags.map((t, i) => {
+                                            const meta = noteTagByLabel(t);
+                                            return (
+                                              <span
+                                                key={`${item.id}-tag-${i}`}
+                                                className="rounded-full px-2 py-0.5 text-[10px] font-black"
+                                                style={meta ? { background: meta.bg, color: meta.color } : { background: "#E2E8F0", color: "#334155" }}
+                                              >
+                                                {t}
+                                              </span>
+                                            );
+                                          })}
+                                        </span>
+                                      ) : null}
+                                      ♡ {isExpanded ? bodyText : previewPatientNoteText(bodyText)}
+                                    </div>
                                     <div className="mt-2 flex flex-wrap items-center gap-2">
                                       {hasOverflow ? (
                                         <button
@@ -5585,6 +5606,19 @@ export default function PatientDashboardPage() {
             </span>
             {noteTranscribing ? "Transcription…" : noteRecording ? "Arrêter la dictée" : "Dicter la note"}
             </button>
+          </div>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {NOTE_TAGS.map((tag) => (
+              <button
+                key={tag.id}
+                type="button"
+                onClick={() => setNote((prev) => prependNoteTag(prev, tag.label))}
+                className="rounded-full border px-2.5 py-1 text-[11px] font-black"
+                style={{ borderColor: `${tag.color}33`, background: tag.bg, color: tag.color }}
+              >
+                + {tag.label}
+              </button>
+            ))}
           </div>
           <textarea
             autoFocus

@@ -28,6 +28,7 @@ import PatientDuplicateBanner from "../components/patients/PatientDuplicateBanne
 import { api } from "../lib/api.js";
 import { useCalls } from "../lib/useCalls.js";
 import { useNoteDictation, appendDictatedText, formatDictationElapsed } from "../lib/useNoteDictation.js";
+import { NOTE_TAGS, prependNoteTag } from "../lib/noteTags.js";
 import { canCreatePatientFromCall, getCallCounts } from "../lib/callJournal.utils.js";
 import {
   buildCallPatientApiPayload,
@@ -838,6 +839,27 @@ function DetailPanel({ call, onClose, onCreatePatient, onOpenPatient, onMarkHand
             <PanelAction icon={PenLine} label="Ajouter une note" onClick={() => setNoteOpen((prev) => !prev)} />
             {noteOpen ? (
               <div style={{ borderRadius: 12, border: `1px solid ${C.line}`, padding: 10, background: C.white }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {NOTE_TAGS.map((tag) => (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() => setNoteDraft((prev) => prependNoteTag(prev, tag.label))}
+                      style={{
+                        borderRadius: 99,
+                        border: `1px solid ${tag.color}33`,
+                        background: tag.bg,
+                        color: tag.color,
+                        padding: "3px 10px",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                      }}
+                    >
+                      + {tag.label}
+                    </button>
+                  ))}
+                </div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: C.muted }}>Écrivez ou dictez la note</span>
                   {noteDictation.supported ? (
