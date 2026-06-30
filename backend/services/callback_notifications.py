@@ -51,6 +51,81 @@ def _source_label(source: str) -> str:
     return clean or "Inconnue"
 
 
+def _is_urgent_request(reason: str, message: Optional[str]) -> bool:
+    blob = f"{reason or ''} {message or ''}".lower()
+    return "urgen" in blob
+
+
+def _resolve_tenant_notification_phone(tenant_id: int) -> str:
+    """Numéro SMS du praticien pour être alerté des nouvelles demandes."""
+    params = get_params(int(tenant_id or 1)) or {}
+    for key in (
+        "notification_phone",
+        "transfer_practitioner_phone",
+        "responsible_phone",
+        "practitioner_phone",
+    ):
+        value = str(params.get(key) or "").strip()
+        if value:
+            try:
+                from backend.db import normalize_phone_number
+
+                normalized = normalize_phone_number(value)
+            except Exception:
+                normalized = value
+            if normalized:
+                return normalized
+    return ""
+
+
+def _sms_alerts_enabled(tenant_id: int) -> bool:
+    """Opt-out possible : notify_requests_sms = "false" désactive les SMS d'alerte."""
+    params = get_params(int(tenant_id or 1)) or {}
+    value = params.get("notify_requests_sms")
+    if value is None:
+        return True
+    return str(value).strip().lower() not in ("0", "false", "no", "off", "non")
+
+
+def _send_callback_sms(
+    *,
+    tenant_id: int,
+    name: str,
+    phone: str,
+    reason: str,
+    message: Optional[str],
+) -> bool:
+    if not _sms_alerts_enabled(tenant_id):
+        return False
+    to_number = _resolve_tenant_notification_phone(tenant_id)
+    if not to_number:
+        return False
+    try:
+        from backend.services.sms_service import send_sms_message, sms_is_configured
+
+        if not sms_is_configured():
+            return False
+        reason_label = CALLBACK_REASON_LABELS.get(str(reason or "").lower(), str(reason or "Autre demande"))
+        patient_name = (name or "Patient").strip() or "Patient"
+        patient_phone = (phone or "").strip() or "—"
+        urgent = _is_urgent_request(reason, message)
+        prefix = "⚠️ URGENCE — " if urgent else ""
+        detail = (message or "").strip()
+        body = (
+            f"{prefix}UWi — Nouvelle demande à traiter\n"
+            f"{patient_name} ({patient_phone})\n"
+            f"Motif : {reason_label}"
+        )
+        if detail:
+            body += f"\n{detail[:200]}"
+        body += "\n→ Section Demandes du dashboard."
+        ok, _err = send_sms_message(to_number, body)
+        return bool(ok)
+    except Exception as exc:
+        logger.warning("callback_notification_sms_exception tenant=%s: %s", tenant_id, exc)
+        return False
+
+
 def notify_cabinet_callback_request(
     *,
     tenant_id: int,
@@ -63,10 +138,20 @@ def notify_cabinet_callback_request(
     email: Optional[str] = None,
     call_id: Optional[str] = None,
 ) -> bool:
+    # SMS immédiat au praticien (best-effort), indépendant de l'e-mail.
+    sms_ok = _send_callback_sms(
+        tenant_id=tenant_id,
+        name=name,
+        phone=phone,
+        reason=reason,
+        message=message,
+    )
+
     to_email = _resolve_tenant_notification_email(tenant_id)
     if not to_email:
-        logger.warning("callback_notification_skipped tenant=%s reason=no_recipient", tenant_id)
-        return False
+        if not sms_ok:
+            logger.warning("callback_notification_skipped tenant=%s reason=no_recipient", tenant_id)
+        return sms_ok
 
     cabinet_name = _tenant_display_name(tenant_id)
     reason_label = CALLBACK_REASON_LABELS.get(str(reason or "").lower(), str(reason or "Autre demande"))
@@ -163,4 +248,4 @@ def notify_cabinet_callback_request(
             return True
         except Exception as exc:
             logger.warning("callback_notification_smtp_exception: %s", exc)
-    return False
+    return sms_ok
