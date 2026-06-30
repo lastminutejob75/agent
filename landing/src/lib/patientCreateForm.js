@@ -34,7 +34,11 @@ export function composePatientCreateName({ firstName, lastName }) {
 }
 
 export function buildPatientCreateFormFromCall(call) {
-  const fromName = splitPatientFullName(call?.patient?.name);
+  // Pour un appelant inconnu, `call.patient.name` est un libellé ("Patient
+  // inconnu · 8414") : on ne pré-remplit donc pas nom/prénom dans ce cas
+  // (l'extraction depuis la transcription s'en chargera si possible).
+  const known = Boolean(call?.patient?.known);
+  const fromName = known ? splitPatientFullName(call?.patient?.name) : { firstName: "", lastName: "" };
   const fallbackNote = call?.claraResume || call?.summary || "Aucun résumé Clara disponible.";
   return {
     ...PATIENT_CREATE_FORM_EMPTY,

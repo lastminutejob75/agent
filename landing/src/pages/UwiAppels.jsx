@@ -1220,6 +1220,30 @@ export default function UwiAppels() {
     setCreateForm(buildPatientCreateFormFromCall(call));
     setCreateConflicts([]);
     setCreateModalOpen(true);
+    void prefillCreateFormFromCall(call);
+  }
+
+  // Pré-remplissage best-effort : extrait prénom/nom de la transcription de
+  // l'appel et complète uniquement les champs encore vides.
+  async function prefillCreateFormFromCall(call) {
+    const callId = call?.id;
+    if (!callId) return;
+    try {
+      const extracted = await api.tenantExtractCallPatient(callId);
+      const first = String(extracted?.first_name || "").trim();
+      const last = String(extracted?.last_name || "").trim();
+      if (!first && !last) return;
+      setCreateForm((prev) => {
+        if (prev.callId !== callId) return prev;
+        const next = { ...prev };
+        if (first && !String(prev.firstName || "").trim()) next.firstName = first;
+        if (last && !String(prev.lastName || "").trim()) next.lastName = last;
+        return next;
+      });
+      notify("Nom pré-rempli depuis l'appel — vérifiez avant d'enregistrer.");
+    } catch {
+      /* best-effort : pas de pré-remplissage si l'extraction échoue */
+    }
   }
 
   async function handleCreatePatientSubmit() {

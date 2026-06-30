@@ -365,6 +365,11 @@ export const api = {
     request(`/api/tenant/calls${params}`, { tenant: true }),
   tenantGetCallDetail: (callId) =>
     request(`/api/tenant/calls/${encodeURIComponent(callId)}`, { tenant: true }),
+  tenantExtractCallPatient: (callId) =>
+    request(`/api/tenant/calls/${encodeURIComponent(callId)}/extract-patient`, {
+      method: "POST",
+      tenant: true,
+    }),
   tenantUpdateCallFollowup: (callId, body) =>
     request(`/api/tenant/calls/${encodeURIComponent(callId)}/followup`, {
       method: "PATCH",

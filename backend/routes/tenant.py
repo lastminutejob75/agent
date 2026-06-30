@@ -3590,6 +3590,71 @@ def tenant_call_detail(
     }
 
 
+def _extract_patient_fields_with_anthropic(text: str) -> Dict[str, str]:
+    """Extrait prénom/nom/motif depuis un texte d'appel via Anthropic (JSON strict)."""
+    api_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY manquant")
+    from anthropic import Anthropic
+
+    model = str(os.getenv("LLM_ASSIST_MODEL") or "").strip() or "claude-haiku-4-5-20251001"
+    system = (
+        "Tu extrais des informations d'identite depuis la transcription d'un appel "
+        "telephonique medical, en francais. N'invente jamais : si une info est absente, "
+        "renvoie une chaine vide. Reponds en JSON strict uniquement : "
+        '{"first_name":"<prenom ou vide>","last_name":"<nom ou vide>",'
+        '"motif":"<motif de l\'appel en 2-5 mots ou vide>"}'
+    )
+    client = Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=model,
+        max_tokens=200,
+        system=system,
+        messages=[{"role": "user", "content": f"Transcription:\n{text[:6000]}"}],
+    )
+    raw = "".join(
+        getattr(block, "text", "")
+        for block in getattr(message, "content", [])
+        if getattr(block, "type", None) == "text"
+    ).strip()
+    parsed = _consultation_parse_json_payload(raw) or {}
+
+    def _clean(value: Any) -> str:
+        return str(value or "").strip()[:120]
+
+    return {
+        "first_name": _clean(parsed.get("first_name")),
+        "last_name": _clean(parsed.get("last_name")),
+        "motif": _clean(parsed.get("motif")),
+    }
+
+
+@router.post("/calls/{call_id}/extract-patient")
+def tenant_extract_call_patient(
+    call_id: str,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Pré-remplissage de fiche : extrait (best-effort) prénom/nom/motif depuis
+    la transcription de l'appel. Jamais bloquant (renvoie des champs vides en
+    cas d'absence de transcription ou d'IA)."""
+    tenant_id = auth["tenant_id"]
+    raw = _get_call_detail(tenant_id, call_id) or {}
+    status = _resolve_call_status(None, raw)
+    transcript = str(raw.get("transcript") or "").strip()
+    summary = str(_call_summary_from_detail(status, raw) or "").strip()
+    text = transcript or summary
+    result = {"first_name": "", "last_name": "", "motif": ""}
+    if text:
+        try:
+            result = _extract_patient_fields_with_anthropic(text)
+        except Exception as exc:
+            logger.info("extract-patient fallback call=%s: %s", str(call_id)[:16], exc)
+    if not result.get("motif"):
+        ctx = _classify_call_context(status, raw)
+        result["motif"] = str(ctx.get("reason_label") or "").strip()
+    return result
+
+
 @router.patch("/calls/{call_id}/followup")
 def tenant_call_followup_update(
     call_id: str,
