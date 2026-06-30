@@ -188,6 +188,14 @@ def instrument_module(module: Any, *, prefix: Optional[str] = None) -> int:
             continue
         if getattr(obj, "_uwi_timed", False):
             continue
+        # Certaines fonctions sont utilisées comme dépendances FastAPI et
+        # importées par d'autres modules APRÈS instrumentation. Les envelopper
+        # casse la résolution des annotations (le wrapper porte les globals de
+        # timing_log, pas ceux du module d'origine), ce qui transforme un
+        # paramètre `request: Request` en query param requis -> 422.
+        # Cf. backend/admin_demo/router.py qui importe `_verify_admin`.
+        if getattr(obj, "_uwi_no_timing", False):
+            continue
         label = f"{prefix or mod_name}.{attr_name}"
         setattr(module, attr_name, timed_fn(label)(obj))
         wrapped_count += 1

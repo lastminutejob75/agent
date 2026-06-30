@@ -380,6 +380,12 @@ def require_admin(
     raise HTTPException(401, "Invalid or expired token")
 
 
+# Ne pas instrumenter cette dépendance d'auth : elle est importée par
+# d'autres modules (ex. backend/admin_demo/router.py) APRÈS l'instrumentation
+# timing_log. Un wrapper casserait la résolution de l'annotation `request:
+# Request` (globals de timing_log) -> 422 au lieu de 401. Cf. timing_log.py.
+require_admin._uwi_no_timing = True  # type: ignore[attr-defined]
+
 # Alias pour compatibilité existante
 _verify_admin = require_admin
 
