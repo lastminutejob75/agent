@@ -5624,6 +5624,17 @@ async def tenant_consultation_transcribe_route(
         }
 
 
+def _invalidate_patient_summary_safe(tenant_id: int, phone: str) -> None:
+    """Force la régénération de la synthèse santé au prochain affichage.
+    Best-effort : ne doit jamais faire échouer l'écriture de la note."""
+    try:
+        from backend.services.patient_summary import invalidate_patient_summary
+
+        invalidate_patient_summary(tenant_id, phone)
+    except Exception:
+        logger.debug("invalidate_patient_summary failed", exc_info=True)
+
+
 @router.get("/patients/{phone}/notes")
 def tenant_list_patient_notes(
     phone: str,
@@ -5666,6 +5677,7 @@ def tenant_create_patient_note(
     )
     if not created:
         raise HTTPException(500, "Impossible d'enregistrer la note")
+    _invalidate_patient_summary_safe(tenant_id, phone)
     return {
         "ok": True,
         "item": {
@@ -5690,6 +5702,7 @@ def tenant_delete_patient_note(
         raise HTTPException(404, "Patient not found")
     if not delete_patient_note(tenant_id, note_id, patient_phone=phone):
         raise HTTPException(404, "Note not found")
+    _invalidate_patient_summary_safe(tenant_id, phone)
     return {"ok": True}
 
 
@@ -5712,6 +5725,7 @@ def tenant_update_patient_note(
     )
     if not updated:
         raise HTTPException(404, "Note not found")
+    _invalidate_patient_summary_safe(tenant_id, phone)
     return {
         "ok": True,
         "item": {
