@@ -101,6 +101,15 @@ class _TimedCursorProxy:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._cursor, name)
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        # Attributs internes du proxy : rester sur le proxy.
+        # Tout le reste (ex: arraysize) doit être posé sur le vrai curseur,
+        # sinon on masque l'attribut réel derrière le proxy.
+        if name in ("_cursor", "_source"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._cursor, name, value)
+
     def __enter__(self) -> "_TimedCursorProxy":
         self._cursor.__enter__()
         return self
@@ -137,6 +146,17 @@ class _TimedConnectionProxy:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._conn, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # Attributs internes du proxy : rester sur le proxy.
+        # Les autres (ex: row_factory, isolation_level) DOIVENT être
+        # propagés à la vraie connexion, sinon `conn.row_factory = Row`
+        # est silencieusement ignoré et les curseurs renvoient des tuples
+        # -> "tuple indices must be integers" sur tout accès row["clé"].
+        if name in ("_conn", "_source"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._conn, name, value)
 
     def __enter__(self) -> "_TimedConnectionProxy":
         self._conn.__enter__()
