@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import FicheConsultationUWI from "./FicheConsultationUWI.jsx";
 
@@ -32,5 +32,34 @@ describe("FicheConsultationUWI — barre de dictée", () => {
     // Le badge du garde-fou est de la forme "2 à relire" ; "À relire avant examen"
     // (contexte patient) ne doit pas être confondu avec lui.
     expect(screen.queryByText(/\d+\s+à relire/i)).toBeNull();
+  });
+
+  it("remplace les chips locales par la réponse LLM quand le niveau B répond", async () => {
+    const onLoadPrefill = vi.fn(() => Promise.resolve({
+      source: "clara",
+      resume_appel: "« mal au ventre depuis 3 jours »",
+      derniere_consultation: "Aucune consultation récente.",
+      documents: "Aucun document.",
+      extraction: { motif: "mal au ventre depuis 3 jours" },
+      champs_confiance: [],
+      avertissements: [],
+    }));
+    const onReformulateMotif = vi.fn(() => Promise.resolve({
+      suggestions: ["Douleurs abdominales à explorer (LLM)", "Épigastralgies — évolution 3 jours"],
+    }));
+
+    render(
+      <FicheConsultationUWI
+        onLoadPrefill={onLoadPrefill}
+        onReformulateMotif={onReformulateMotif}
+      />,
+    );
+
+    expect(await screen.findByText("Douleurs abdominales à explorer")).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByText("Douleurs abdominales à explorer (LLM)")).toBeTruthy();
+    });
+    expect(onReformulateMotif).toHaveBeenCalled();
   });
 });

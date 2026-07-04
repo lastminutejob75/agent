@@ -2761,6 +2761,20 @@ export default function PatientDashboardPage() {
     return api.tenantGetPatientConsultationPrefill(tenantPatientPhone);
   }, [tenantPatientPhone]);
 
+  const reformulateConsultationMotif = useCallback(async (payload: {
+    raw_motif: string;
+    patient_age?: number;
+    signal?: AbortSignal;
+  }) => {
+    return api.tenantReformulateConsultationMotif(
+      {
+        raw_motif: String(payload?.raw_motif || "").trim(),
+        patient_age: payload?.patient_age,
+      },
+      { signal: payload?.signal, timeoutMs: 2000 },
+    ) as Promise<{ suggestions?: string[]; source?: string }>;
+  }, []);
+
   const transcribeConsultationAudio = useCallback(
     async (audioBlob: Blob, opts?: { transcriptionOnly?: boolean }) => {
       if (!(audioBlob instanceof Blob)) {
@@ -5706,6 +5720,7 @@ export default function PatientDashboardPage() {
               prefill: consultationInitialDraft.prefill,
             }}
             onLoadPrefill={loadConsultationPrefill}
+            onReformulateMotif={reformulateConsultationMotif}
             onTranscribe={transcribeConsultationAudio}
             onGenerateSummary={generateConsultationSummary}
             onSave={(payload) => submitConsultationForm((payload || {}) as Record<string, unknown>)}

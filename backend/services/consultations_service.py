@@ -81,6 +81,10 @@ class ConsultationCreate(BaseModel):
     date:                date
     mode_consultation:   Literal["rapide", "complete"] = "rapide"
     motif:               str = Field(min_length=1)
+    # Traçabilité de la reformulation du motif (chips UWI) — conservée dans
+    # raw_payload pour alimenter clara_patient_signals plus tard.
+    motif_source:        Literal["praticien", "uwi_suggestion"] = "praticien"
+    motif_raw_patient:   Optional[str] = None
     anamnese:            str = ""
     examen_clinique:     ExamenClinique = ExamenClinique()
     impression_clinique: str = Field(min_length=1)

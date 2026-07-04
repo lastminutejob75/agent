@@ -469,6 +469,14 @@ export const api = {
       body,
       tenant: true,
     }),
+  tenantReformulateConsultationMotif: (body, opts = {}) =>
+    request("/api/tenant/consultations/reformulate-motif", {
+      method: "POST",
+      body,
+      tenant: true,
+      timeoutMs: opts?.timeoutMs ?? 2000,
+      signal: opts?.signal,
+    }),
   tenantTranscribeConsultation: async (audioBlob, phone = "", opts = {}) => {
     const formData = new FormData();
     formData.append("audio", audioBlob, "consultation.webm");

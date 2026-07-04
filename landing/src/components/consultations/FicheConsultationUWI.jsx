@@ -7,6 +7,8 @@ import {
   Bell, MessageSquare, Info,
 } from "lucide-react";
 
+import { getMotifSuggestions } from "./motifReformulations.js";
+
 /**
  * Fiche de consultation UWI — avec dictée vocale structurée
  * ==========================================================================
@@ -21,6 +23,8 @@ import {
  *  - onTranscribe(audioBlob)  : POST /api/tenant/consultations/transcribe
  *                               -> { transcription, extraction, champs_confiance, avertissements }
  *                               (absent => mode démo avec extraction simulée)
+ *  - onReformulateMotif({ raw_motif, patient_age?, signal? })
+ *                               : POST /api/tenant/consultations/reformulate-motif (niveau B, optionnel)
  */
 
 const C = {
@@ -35,6 +39,58 @@ const C = {
   shadowHeader: "0 8px 28px rgba(10,22,40,0.22)",
   focusRing: "0 0 0 3px rgba(0,156,164,0.14)",
 };
+
+// ---- Détection de contenu "vide ou générique" (chantier contexte) ----
+// Un champ qui ne contient que ces valeurs n'apporte aucun signal clinique.
+const GENERIC_VALUES = [
+  "consultation", "à compléter", "a completer",
+  "non renseigné", "non renseignée", "non renseignés", "non renseignées",
+  "aucun", "aucune", "—", "-", "",
+  "aucune allergie connue", "aucun traitement en cours",
+  "aucun antécédent médical majeur connu", "aucun antecedent medical majeur connu",
+  "néant", "neant", "ras", "r.a.s.",
+];
+
+export function isEmptyOrGeneric(value) {
+  if (value == null) return true;
+  const v = String(value).trim().toLowerCase();
+  return v.length === 0 || GENERIC_VALUES.includes(v);
+}
+
+// Une synthèse type "Dernière consultation: ... | Motif: Consultation | Impression: À compléter"
+// est vide si son motif ET son impression sont génériques.
+export function isEmptyOrGenericSynthese(value) {
+  if (isEmptyOrGeneric(value)) return true;
+  const text = String(value);
+  const motifMatch = text.match(/motif\s*:\s*([^|]*)/i);
+  const impressionMatch = text.match(/impression\s*:\s*([^|]*)/i);
+  if (motifMatch || impressionMatch) {
+    const motifGeneric = motifMatch ? isEmptyOrGeneric(motifMatch[1]) : true;
+    const impressionGeneric = impressionMatch ? isEmptyOrGeneric(impressionMatch[1]) : true;
+    return motifGeneric && impressionGeneric;
+  }
+  return false;
+}
+
+const normalizedText = (v) => String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+// Champs structurés du bloc "Dossier patient" (hors synthèses, gérées à part)
+const DOSSIER_FIELDS = [
+  { key: "allergies", label: "Allergies", tone: "alert" },
+  { key: "traitements", label: "Traitements en cours", tone: "teal" },
+  { key: "points_attention", label: "Points d'attention", tone: "amber" },
+  { key: "facteurs_risque", label: "Facteurs de risque", tone: "amber" },
+  { key: "antecedents_medicaux", label: "Antécédents médicaux", tone: "neutral" },
+  { key: "antecedents_chirurgicaux", label: "Antécédents chirurgicaux", tone: "neutral" },
+];
+
+function dossierHasContent(patient) {
+  return (
+    DOSSIER_FIELDS.some((f) => !isEmptyOrGeneric(patient?.[f.key])) ||
+    !isEmptyOrGenericSynthese(patient?.synthese_medicale) ||
+    !isEmptyOrGenericSynthese(patient?.dernier_contexte_consultation)
+  );
+}
 
 const PATIENT_MOCK = {
   id: "pat_001", nom: "M. X", age: 32, sexe: "H",
@@ -275,6 +331,65 @@ const SOURCE_META = {
   template: { label: "Modèle",        color: "#B45309", soft: "#FEF4E4" },
 };
 
+// ---- Complétude relative au mode (rapide / complet) ----
+const COMPLETUDE_REFERENTIELS = {
+  rapide: {
+    required: ["motif"],
+    scored: [
+      { field: "motif", weight: 40 },
+      { field: "impression", weight: 40 },
+      { field: "prescription_ou_examens", weight: 20 },
+    ],
+  },
+  complet: {
+    required: ["motif"],
+    scored: [
+      { field: "motif", weight: 15 },
+      { field: "anamnese", weight: 15 },
+      { field: "etat_general", weight: 10 },
+      { field: "constantes", weight: 15 },
+      { field: "impression", weight: 20 },
+      { field: "prescription_ou_examens", weight: 15 },
+      { field: "suivi", weight: 10 },
+    ],
+  },
+};
+
+// Ratio de remplissage d'un champ scoré : 0, 0.5 (constantes partielles) ou 1.
+function completudeFieldRatio(field, c, hasExistingNextAppointment) {
+  switch (field) {
+    case "motif":
+      return isEmptyOrGeneric(c.motif) ? 0 : 1;
+    case "anamnese":
+      return isEmptyOrGeneric(c.anamnese) ? 0 : 1;
+    case "etat_general":
+      return isEmptyOrGeneric(c.etatGeneral) ? 0 : 1;
+    case "impression":
+      return isEmptyOrGeneric(c.impression) ? 0 : 1;
+    case "prescription_ou_examens":
+      return !isEmptyOrGeneric(c.prescription) || (c.examens?.length ?? 0) > 0 ? 1 : 0;
+    case "constantes": {
+      const filled = [c.fc, c.pas, c.pad, c.temp, c.spo2, c.fr, c.poids, c.taille]
+        .filter((v) => !isEmptyOrGeneric(v)).length;
+      return filled >= 2 ? 1 : filled === 1 ? 0.5 : 0;
+    }
+    case "suivi":
+      // Un RDV de suivi déjà planifié compte comme suivi assuré.
+      return !isEmptyOrGeneric(c.suiviConsignes) || !isEmptyOrGeneric(c.suiviRdv) || hasExistingNextAppointment ? 1 : 0;
+    default:
+      return 0;
+  }
+}
+
+export function computeCompletude(c, mode, hasExistingNextAppointment = false) {
+  const ref = COMPLETUDE_REFERENTIELS[mode === "complete" ? "complet" : "rapide"];
+  const score = ref.scored.reduce(
+    (sum, { field, weight }) => sum + weight * completudeFieldRatio(field, c, hasExistingNextAppointment),
+    0,
+  );
+  return Math.round(score);
+}
+
 // Vérifications de complétude — non bloquantes, jamais diagnostiques (parle workflow).
 function runChecks(c) {
   const checks = [];
@@ -316,6 +431,7 @@ export default function FicheConsultationUWI({
   onGenerateSummary,
   onTranscribe,
   onLoadPrefill,   // (patientId) => { source, extraction, champs_confiance, avertissements, resume_appel, ... }
+  onReformulateMotif, // ({ raw_motif, patient_age?, signal? }) => { suggestions: string[] } — niveau B LLM
   initialDraft = {}, // { date?: string, motif?: string, appointment_id?: string, source_consultation_id?: string, prefill?: {...} }
 }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -328,7 +444,8 @@ export default function FicheConsultationUWI({
   const set = (k) => (v) => setC((s) => ({ ...s, [k]: v }));
 
   const [examenInput, setExamenInput] = useState("");
-  const [showDossier, setShowDossier] = useState(true);
+  // Dossier vide -> replié par défaut : pas de mur de cartes "—" à l'ouverture.
+  const [showDossier, setShowDossier] = useState(() => dossierHasContent(patient));
   const [savePending, setSavePending] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
@@ -354,6 +471,11 @@ export default function FicheConsultationUWI({
   const [prefillLoading, setPrefillLoading] = useState(false);
   const [prefillUsed, setPrefillUsed] = useState(false);
 
+  // ---- Reformulation du motif patient (traçabilité clara_patient_signals) ----
+  const [motifSource, setMotifSource] = useState("praticien"); // 'uwi_suggestion' | 'praticien'
+  const [appliedMotifSuggestion, setAppliedMotifSuggestion] = useState(null);
+  const [llmMotifSuggestions, setLlmMotifSuggestions] = useState(null);
+
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
   const timerRef = useRef(null);
@@ -372,7 +494,15 @@ export default function FicheConsultationUWI({
     setFollowupBookingTime("09:00");
     setSaveError("");
     setSaveNotice("");
+    setMotifSource("praticien");
+    setAppliedMotifSuggestion(null);
   }, [initialDraft?.date, initialDraft?.motif, initialDraft?.source_consultation_id, today]);
+
+  // Changement de patient : le repli par défaut du dossier suit son contenu.
+  useEffect(() => {
+    setShowDossier(dossierHasContent(patient));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.id]);
 
   // Chargement de la préparation à l'ouverture de la fiche
   useEffect(() => {
@@ -425,15 +555,88 @@ export default function FicheConsultationUWI({
     saveFeedbackRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [saveError, saveNotice]);
 
-  const completion = useMemo(() => {
-    const required = mode === "rapide"
-      ? [c.motif, c.suiviConsignes]
-      : [c.motif, c.anamnese, c.etatGeneral, c.suiviConsignes];
-    return Math.round((required.filter((x) => x.trim().length > 0).length / required.length) * 100);
-  }, [c, mode]);
+  // Score de complétude relatif au mode actif : une fiche rapide bien remplie
+  // affiche 100 %, pas 50 % calculés sur le référentiel du mode complet.
+  const completion = useMemo(
+    () => computeCompletude(c, mode, hasExistingNextAppointment),
+    [c, mode, hasExistingNextAppointment],
+  );
 
   const pendingKeys = useMemo(() => new Set(Object.keys(draft)), [draft]);
   const checks = useMemo(() => runChecks(c), [c]);
+
+  // Verbatim patient (prise de RDV) : source des chips de reformulation.
+  const motifRawPatient = useMemo(() => {
+    const fromPrefill = String(prefill?.extraction?.motif || "").trim();
+    if (fromPrefill) return fromPrefill;
+    const fromCall = String(prefill?.resume_appel || "").trim().replace(/^«\s*|\s*»$/g, "");
+    return fromCall || null;
+  }, [prefill]);
+
+  const localMotifSuggestions = useMemo(
+    () => (motifRawPatient ? getMotifSuggestions(motifRawPatient) : []),
+    [motifRawPatient],
+  );
+
+  const motifSuggestions = llmMotifSuggestions ?? localMotifSuggestions;
+
+  // Niveau B : chips locales immédiates, remplacées si le LLM répond (< 2 s).
+  useEffect(() => {
+    if (!motifRawPatient || typeof onReformulateMotif !== "function") {
+      setLlmMotifSuggestions(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setLlmMotifSuggestions(null);
+
+    (async () => {
+      try {
+        const res = await onReformulateMotif({
+          raw_motif: motifRawPatient,
+          patient_age: patient?.age ?? undefined,
+          signal: controller.signal,
+        });
+        if (cancelled) return;
+        const next = Array.isArray(res?.suggestions)
+          ? res.suggestions.map((s) => String(s || "").trim()).filter(Boolean).slice(0, 3)
+          : [];
+        if (next.length) setLlmMotifSuggestions(next);
+      } catch {
+        /* fallback silencieux sur le niveau A */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [motifRawPatient, onReformulateMotif, patient?.age]);
+
+  const applyMotifSuggestion = (suggestion) => {
+    setC((s) => ({ ...s, motif: suggestion }));
+    setMotifSource("uwi_suggestion");
+    setAppliedMotifSuggestion(suggestion);
+  };
+
+  // Édition manuelle du motif : le champ fait foi, la chip perd son état sélectionné.
+  const handleMotifChange = (value) => {
+    setC((s) => ({ ...s, motif: value }));
+    if (value !== appliedMotifSuggestion) {
+      setMotifSource("praticien");
+      setAppliedMotifSuggestion(null);
+    }
+  };
+
+  // Suggérer le mode complet sur une fiche vide est du bruit : la suggestion
+  // n'apparaît que si des données "mode complet" sont déjà en cours de saisie.
+  const suggestCompleteMode = useMemo(() => {
+    if (mode !== "rapide") return false;
+    const hasConstante = [c.fc, c.pas, c.pad, c.temp, c.spo2, c.fr, c.poids, c.taille]
+      .some((v) => String(v ?? "").trim().length > 0);
+    return hasConstante || c.anamnese.trim().length > 80;
+  }, [mode, c.fc, c.pas, c.pad, c.temp, c.spo2, c.fr, c.poids, c.taille, c.anamnese]);
 
   // ---------------- Examens ----------------
   const addExamen = (label) => {
@@ -642,6 +845,8 @@ export default function FicheConsultationUWI({
     date,
     mode_consultation: mode,
     motif: c.motif, anamnese: c.anamnese,
+    motif_source: motifSource,
+    motif_raw_patient: motifRawPatient,
     examen_clinique: {
       etat_general: c.etatGeneral, examen_physique: c.examenPhysique,
       constantes: {
@@ -723,9 +928,11 @@ export default function FicheConsultationUWI({
 
   const isComplete = mode === "complete";
   const draftCount = Object.keys(draft).length;
-  const hasCriticalContext = Boolean(
-    patient.allergies || patient.traitements || patient.points_attention || patient.facteurs_risque,
-  );
+  const hasCriticalContext =
+    !isEmptyOrGeneric(patient.allergies) ||
+    !isEmptyOrGeneric(patient.traitements) ||
+    !isEmptyOrGeneric(patient.points_attention) ||
+    !isEmptyOrGeneric(patient.facteurs_risque);
 
   // Garde-fou : tant que des propositions de dictée ne sont ni acceptées ni
   // refusées, on évite qu'une fermeture/rafraîchissement accidentel les perde.
@@ -812,11 +1019,11 @@ export default function FicheConsultationUWI({
           </div>
           {canSave ? (
             <span className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: C.tealDark }}>
-              <Check size={14} /> Prêt à enregistrer · {completion}%
+              <Check size={14} /> Prêt à enregistrer · {completion}% (mode {isComplete ? "complet" : "rapide"})
             </span>
           ) : (
             <span className="text-xs font-medium" style={{ color: C.faint }}>
-              Motif requis · {completion}%
+              Motif requis · {completion}% (mode {isComplete ? "complet" : "rapide"})
             </span>
           )}
         </section>
@@ -839,6 +1046,7 @@ export default function FicheConsultationUWI({
           hasCriticalContext={hasCriticalContext}
           completion={completion}
           isComplete={isComplete}
+          showCompleteSuggestion={suggestCompleteMode}
           onCompleteMode={() => setMode("complete")}
         />
 
@@ -852,7 +1060,15 @@ export default function FicheConsultationUWI({
 
         {/* ================= Préparation UWi (Clara + dossier) ================= */}
         {prefill && !prefillUsed && (
-          <PrepCard prefill={prefill} loading={prefillLoading} onUse={usePrefill} />
+          <PrepCard
+            prefill={prefill}
+            loading={prefillLoading}
+            onUse={usePrefill}
+            motifRaw={motifRawPatient}
+            suggestions={motifSuggestions}
+            appliedSuggestion={appliedMotifSuggestion}
+            onApplySuggestion={applyMotifSuggestion}
+          />
         )}
 
         {/* ================= Relecture des propositions (validation) ================= */}
@@ -865,34 +1081,13 @@ export default function FicheConsultationUWI({
         )}
 
         {/* ================= Dossier patient ================= */}
-        <Card icon={<User size={15} />} title="Dossier patient"
-          subtitle="Contexte stable — à relire avant de conclure" tinted
-          right={
-            <button onClick={() => setShowDossier((s) => !s)}
-              className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide transition hover:opacity-80"
-              style={{ color: C.tealDark }}>
-              {showDossier ? "Masquer" : "Afficher"}
-            </button>
-          }>
-          {showDossier && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <ReadField label="Allergies" value={patient.allergies || "—"} tone={patient.allergies ? "alert" : "neutral"} />
-              <ReadField label="Traitements en cours" value={patient.traitements || "—"} tone={patient.traitements ? "teal" : "neutral"} />
-              <ReadField label="Points d'attention" value={patient.points_attention || "—"} tone={patient.points_attention ? "amber" : "neutral"} />
-              <ReadField label="Facteurs de risque" value={patient.facteurs_risque || "—"} tone={patient.facteurs_risque ? "amber" : "neutral"} />
-              <ReadField label="Antécédents médicaux" value={patient.antecedents_medicaux || "—"} />
-              <ReadField label="Antécédents chirurgicaux" value={patient.antecedents_chirurgicaux || "—"} />
-              <ReadField label="Synthèse médicale" value={patient.synthese_medicale || "—"} wide tone={patient.synthese_medicale ? "teal" : "neutral"} />
-              <ReadField label="Dernier contexte de consultation" value={patient.dernier_contexte_consultation || "—"} wide />
-            </div>
-          )}
-        </Card>
+        <PatientDossierCard patient={patient} show={showDossier} onToggle={() => setShowDossier((s) => !s)} />
 
         {/* ================= Motif & anamnèse ================= */}
         <Card icon={<FileText size={15} />} title="Motif & anamnèse">
           <TemplateBar onApply={applyTemplate} />
           <Label required pending={pendingKeys.has("motif")}>Motif de consultation</Label>
-          <TextArea rows={2} value={c.motif} onChange={set("motif")} pending={pendingKeys.has("motif")}
+          <TextArea rows={2} value={c.motif} onChange={handleMotifChange} pending={pendingKeys.has("motif")}
             placeholder="Ex. Fatigue importante évoluant depuis plusieurs semaines." />
           <div className="mt-4">
             <Label pending={pendingKeys.has("anamnese")}>Anamnèse / histoire de la maladie</Label>
@@ -1374,8 +1569,9 @@ function DictationReview({ draft, transcription, warnings, onAccept, onReject, o
 
 /* ============================ Préparation UWi ============================ */
 
-function PrepCard({ prefill, loading, onUse }) {
+function PrepCard({ prefill, loading, onUse, motifRaw, suggestions = [], appliedSuggestion = null, onApplySuggestion }) {
   const src = SOURCE_META[prefill.source] || SOURCE_META.clara;
+  const suggestionApplied = Boolean(appliedSuggestion);
   return (
     <div className="mb-4 overflow-hidden rounded-3xl"
       style={{ background: "radial-gradient(circle at top right, rgba(0,156,164,.08), transparent 34%), linear-gradient(180deg,#FFFFFF 0%,#FBFEFE 100%)", border: "1px solid rgba(0,156,164,0.24)", boxShadow: C.shadow }}>
@@ -1409,9 +1605,35 @@ function PrepCard({ prefill, loading, onUse }) {
               {prefill.resume_appel}
             </p>
           )}
-          <p className="mt-2 text-[11px] font-medium" style={{ color: C.amber }}>
-            ⚠ Motif déclaré, non médical — à reformuler par le praticien.
-          </p>
+          {!suggestionApplied && (
+            <p className="mt-2 text-[11px] font-medium" style={{ color: C.amber }}>
+              ⚠ Motif déclaré, non médical — à reformuler par le praticien.
+            </p>
+          )}
+          {motifRaw && (
+            <p className="mt-2 text-slate-600 italic text-[13px]">« {motifRaw} »</p>
+          )}
+          {suggestions.length > 0 && (
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {suggestions.map((s) => {
+                const selected = appliedSuggestion === s;
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => onApplySuggestion?.(s)}
+                    className={
+                      selected
+                        ? "rounded-full bg-teal-600 text-white px-3 py-1 text-sm cursor-pointer"
+                        : "rounded-full border border-teal-600 text-teal-700 hover:bg-teal-50 px-3 py-1 text-sm cursor-pointer"
+                    }
+                  >
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div className="space-y-2">
           {prefill.derniere_consultation && <PrepLine n="1" title="Dernière consultation" text={prefill.derniere_consultation} />}
@@ -1512,24 +1734,28 @@ function ChecksCard({ checks }) {
   );
 }
 
-function PatientClinicalSnapshot({ patient, hasCriticalContext, completion, isComplete, onCompleteMode }) {
-  const highlights = [
-    {
-      label: "Allergies",
-      value: patient.allergies || "Non renseignées",
-      tone: patient.allergies ? "alert" : "muted",
-    },
-    {
-      label: "Traitements",
-      value: patient.traitements || "Aucun traitement renseigné",
-      tone: patient.traitements ? "teal" : "muted",
-    },
-    {
-      label: "Attention",
-      value: patient.points_attention || patient.facteurs_risque || "Aucun point d'attention renseigné",
-      tone: patient.points_attention || patient.facteurs_risque ? "amber" : "muted",
-    },
-  ];
+function PatientClinicalSnapshot({ patient, hasCriticalContext, completion, isComplete, showCompleteSuggestion, onCompleteMode }) {
+  // Signal uniquement : une tuile ne s'affiche que si elle contient du contenu réel.
+  // Exception sécurité : des allergies renseignées s'affichent toujours en premier.
+  const highlights = [];
+  if (!isEmptyOrGeneric(patient.allergies)) {
+    highlights.push({ label: "Allergies", value: patient.allergies, tone: "alert" });
+  }
+  if (!isEmptyOrGeneric(patient.traitements)) {
+    highlights.push({ label: "Traitements", value: patient.traitements, tone: "teal" });
+  }
+  const attention = !isEmptyOrGeneric(patient.points_attention)
+    ? patient.points_attention
+    : !isEmptyOrGeneric(patient.facteurs_risque)
+      ? patient.facteurs_risque
+      : null;
+  if (attention) {
+    highlights.push({ label: "Attention", value: attention, tone: "amber" });
+  }
+  if (!isEmptyOrGenericSynthese(patient.synthese_medicale)) {
+    highlights.push({ label: "Synthèse médicale", value: patient.synthese_medicale, tone: "teal", wide: true });
+  }
+  const contextIsEmpty = highlights.length === 0;
   return (
     <section className="mb-4 overflow-hidden rounded-3xl border bg-white shadow-[0_16px_40px_rgba(10,22,40,0.08)]" style={{ borderColor: hasCriticalContext ? "#BFE9EC" : C.line }}>
       <div className="grid gap-0 lg:grid-cols-[1.05fr_1.6fr]">
@@ -1541,7 +1767,7 @@ function PatientClinicalSnapshot({ patient, hasCriticalContext, completion, isCo
             {patient.age} ans{patient.sexe ? ` · ${patient.sexe}` : ""} · consultation {isComplete ? "complète" : "rapide"}
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            <span className="rounded-full bg-white/12 px-3 py-1.5 text-xs font-black text-white">{completion}% complété</span>
+            <span className="rounded-full bg-white/12 px-3 py-1.5 text-xs font-black text-white">{completion}% — mode {isComplete ? "complet" : "rapide"}</span>
             {hasCriticalContext ? (
               <span className="rounded-full bg-[#FFF7ED] px-3 py-1.5 text-xs font-black text-[#B45309]">Contexte à surveiller</span>
             ) : (
@@ -1550,10 +1776,19 @@ function PatientClinicalSnapshot({ patient, hasCriticalContext, completion, isCo
           </div>
         </div>
         <div className="grid gap-3 p-4 sm:grid-cols-3">
-          {highlights.map((item) => (
-            <ClinicalHighlight key={item.label} {...item} />
-          ))}
-          {!isComplete ? (
+          {contextIsEmpty ? (
+            <div className="sm:col-span-3 flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-4 text-slate-500">
+              <Info size={16} className="shrink-0" />
+              <p className="text-[13px] font-medium leading-snug">
+                Dossier encore pauvre — il s'enrichira automatiquement à chaque consultation enregistrée.
+              </p>
+            </div>
+          ) : (
+            highlights.map((item) => (
+              <ClinicalHighlight key={item.label} {...item} />
+            ))
+          )}
+          {showCompleteSuggestion ? (
             <button
               type="button"
               onClick={onCompleteMode}
@@ -1568,7 +1803,58 @@ function PatientClinicalSnapshot({ patient, hasCriticalContext, completion, isCo
   );
 }
 
-function ClinicalHighlight({ label, value, tone }) {
+function PatientDossierCard({ patient, show, onToggle }) {
+  const filled = DOSSIER_FIELDS.filter((f) => !isEmptyOrGeneric(patient?.[f.key]));
+  const empty = DOSSIER_FIELDS.filter((f) => isEmptyOrGeneric(patient?.[f.key]));
+
+  const synthese = !isEmptyOrGenericSynthese(patient?.synthese_medicale) ? patient.synthese_medicale : null;
+  let dernierContexte = !isEmptyOrGenericSynthese(patient?.dernier_contexte_consultation)
+    ? patient.dernier_contexte_consultation
+    : null;
+  // Dédupe stricte : si synthèse et dernier contexte sont identiques, un seul affichage.
+  if (synthese && dernierContexte && normalizedText(synthese) === normalizedText(dernierContexte)) {
+    dernierContexte = null;
+  }
+
+  const hasContent = filled.length > 0 || Boolean(synthese) || Boolean(dernierContexte);
+
+  return (
+    <Card icon={<User size={15} />} title="Dossier patient"
+      subtitle={hasContent ? "Contexte stable — à relire avant de conclure" : "Aucune donnée structurée pour l'instant"} tinted
+      right={
+        <button onClick={onToggle}
+          className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide transition hover:opacity-80"
+          style={{ color: C.tealDark }}>
+          {show ? "Masquer" : "Afficher"}
+        </button>
+      }>
+      {show && (
+        hasContent ? (
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {filled.map((f) => (
+                <ReadField key={f.key} label={f.label} value={patient[f.key]} tone={f.tone} />
+              ))}
+              {synthese && <ReadField label="Synthèse médicale" value={synthese} wide tone="teal" />}
+              {dernierContexte && <ReadField label="Dernier contexte de consultation" value={dernierContexte} wide />}
+            </div>
+            {empty.length > 0 && (
+              <p className="mt-3 text-[12px] font-medium text-slate-400">
+                Non renseignés : {empty.map((f) => f.label.toLowerCase()).join(", ")}
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="rounded-2xl bg-slate-50 px-4 py-3 text-[13px] font-medium text-slate-500">
+            Dossier encore pauvre — il s'enrichira automatiquement à chaque consultation enregistrée.
+          </p>
+        )
+      )}
+    </Card>
+  );
+}
+
+function ClinicalHighlight({ label, value, tone, wide = false }) {
   const styles = {
     alert: { bg: "#FEF3F2", border: "#FDA29B", title: "#B42318", text: "#7A271A" },
     amber: { bg: "#FFFBEB", border: "#FCD34D", title: "#B45309", text: "#78350F" },
@@ -1576,7 +1862,7 @@ function ClinicalHighlight({ label, value, tone }) {
     muted: { bg: "#F8FAFC", border: "#E2E8F0", title: "#64748B", text: "#334155" },
   }[tone] || {};
   return (
-    <div className="rounded-2xl border px-3.5 py-3" style={{ background: styles.bg, borderColor: styles.border }}>
+    <div className={`rounded-2xl border px-3.5 py-3 ${wide ? "sm:col-span-3" : ""}`} style={{ background: styles.bg, borderColor: styles.border }}>
       <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: styles.title }}>{label}</p>
       <p className="mt-1.5 line-clamp-4 text-[13px] font-semibold leading-snug" style={{ color: styles.text }}>{value}</p>
     </div>

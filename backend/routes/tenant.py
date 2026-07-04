@@ -126,6 +126,11 @@ from backend.services.email_service import (
     send_patient_message_email,
 )
 from backend.services.sms_service import send_sms_message
+from backend.services.motif_reformulation_service import (
+    MotifReformulateRequest,
+    build_motif_reformulate_response,
+    is_motif_reformulate_llm_enabled,
+)
 from backend.services.voice_extraction import (
     EXTRACTION_SYSTEM_PROMPT,
     build_user_prompt as build_consultation_extraction_prompt,
@@ -5482,6 +5487,22 @@ def tenant_consultation_summary_route(
             "is_fallback": True,
             "source": "fallback_deterministic",
         }
+
+
+@router.post("/consultations/reformulate-motif")
+def tenant_consultation_reformulate_motif_route(
+    body: MotifReformulateRequest,
+    auth: dict = Depends(require_tenant_auth),
+):
+    _ = auth
+    if not is_motif_reformulate_llm_enabled():
+        raise HTTPException(404, "Reformulation LLM désactivée.")
+    try:
+        return build_motif_reformulate_response(body.raw_motif, body.patient_age).model_dump()
+    except Exception as exc:
+        logger.warning("consultation motif reformulate failed: %s", exc)
+        raise HTTPException(503, "Reformulation indisponible.")
+
 
 def _build_consultation_prefill_payload(
     tenant_id: int,
