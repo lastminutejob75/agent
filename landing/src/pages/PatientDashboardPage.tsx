@@ -632,12 +632,37 @@ function toStatusLabel(statusRaw: "processed" | "cancelled") {
   return statusRaw === "cancelled" ? "Annulée" : "Traitée";
 }
 
+function isTerminalStatusRaw(statusRaw: string) {
+  const raw = String(statusRaw || "").trim().toLowerCase();
+  return raw === "processed" || raw === "cancelled";
+}
+
 function isTerminalLabel(label: string) {
   const normalized = String(label || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  return normalized.includes("annule") || normalized.includes("traite");
+    .toLowerCase()
+    .trim();
+  if (!normalized) return false;
+  // Ne pas confondre « À traiter » / « En cours » avec un statut terminal.
+  if (normalized === "a traiter" || normalized === "en cours" || normalized === "en attente") {
+    return false;
+  }
+  return (
+    normalized === "traitee"
+    || normalized === "traitees"
+    || normalized === "traite"
+    || normalized === "annulee"
+    || normalized === "annulees"
+    || normalized === "annule"
+    || normalized.startsWith("demande traitee")
+    || normalized.startsWith("demande annulee")
+  );
+}
+
+function isRequestTerminal(label: string, statusRaw?: string) {
+  if (statusRaw && isTerminalStatusRaw(statusRaw)) return true;
+  return isTerminalLabel(label);
 }
 
 function persistRequestStatusOverride(requestId: string, statusRaw: "processed" | "cancelled") {
@@ -1544,6 +1569,14 @@ export default function PatientDashboardPage() {
   const otherOpenRequests = useMemo(
     () => patientOpenRequests.filter((row) => row.id !== activeRequestDetail?.id),
     [patientOpenRequests, activeRequestDetail?.id],
+  );
+
+  const activeRequestIsTerminal = useMemo(
+    () => isRequestTerminal(
+      requestStatus || activeRequestDetail?.status || "",
+      activeRequestDetail?.status_raw,
+    ),
+    [requestStatus, activeRequestDetail?.status, activeRequestDetail?.status_raw],
   );
 
   const openPatientRequest = useCallback((req: {
@@ -4823,10 +4856,10 @@ export default function PatientDashboardPage() {
                 <button
                   type="button"
                   onClick={() => updateRequestStatus("processed")}
-                  disabled={!!requestActionLoading || isTerminalLabel(requestStatus || activeRequestDetail.status)}
+                  disabled={!!requestActionLoading || activeRequestIsTerminal}
                   className={cx(
                     "rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] px-4 py-3 text-sm font-black text-[#047857] lg:col-span-2",
-                    !!requestActionLoading || isTerminalLabel(requestStatus || activeRequestDetail.status) ? "cursor-not-allowed opacity-60" : "hover:bg-[#DDFBEF]",
+                    !!requestActionLoading || activeRequestIsTerminal ? "cursor-not-allowed opacity-60" : "hover:bg-[#DDFBEF]",
                   )}
                 >
                   {requestActionLoading === "processed" ? "Traitement..." : "Marquer comme traitée"}
@@ -4834,10 +4867,10 @@ export default function PatientDashboardPage() {
                 <button
                   type="button"
                   onClick={() => updateRequestStatus("cancelled")}
-                  disabled={!!requestActionLoading || isTerminalLabel(requestStatus || activeRequestDetail.status)}
+                  disabled={!!requestActionLoading || activeRequestIsTerminal}
                   className={cx(
                     "rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] px-4 py-3 text-sm font-black text-[#475569] lg:col-span-3",
-                    !!requestActionLoading || isTerminalLabel(requestStatus || activeRequestDetail.status) ? "cursor-not-allowed opacity-60" : "hover:bg-[#F1F5F9]",
+                    !!requestActionLoading || activeRequestIsTerminal ? "cursor-not-allowed opacity-60" : "hover:bg-[#F1F5F9]",
                   )}
                 >
                   {requestActionLoading === "cancelled" ? "Annulation..." : "Annuler la demande"}
