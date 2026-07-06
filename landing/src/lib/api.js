@@ -477,6 +477,14 @@ export const api = {
       timeoutMs: opts?.timeoutMs ?? 2000,
       signal: opts?.signal,
     }),
+  tenantStructureConsultationDictation: (body, opts = {}) =>
+    request("/api/tenant/consultations/structure-dictation", {
+      method: "POST",
+      body,
+      tenant: true,
+      // Le serveur bascule lui-même en mode dégradé après 20 s : on lui laisse la marge.
+      timeoutMs: opts?.timeoutMs ?? 25000,
+    }),
   tenantTranscribeConsultation: async (audioBlob, phone = "", opts = {}) => {
     const formData = new FormData();
     formData.append("audio", audioBlob, "consultation.webm");

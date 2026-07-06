@@ -18,10 +18,11 @@ import re
 import httpx
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from types import SimpleNamespace
 from uuid import uuid4
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import bcrypt
@@ -130,6 +131,11 @@ from backend.services.motif_reformulation_service import (
     MotifReformulateRequest,
     build_motif_reformulate_response,
     is_motif_reformulate_llm_enabled,
+)
+from backend.services.dictation_structuring_service import (
+    StructureDictationRequest,
+    build_degraded_blocks,
+    structure_dictation,
 )
 from backend.services.voice_extraction import (
     EXTRACTION_SYSTEM_PROMPT,
@@ -3884,6 +3890,31 @@ def tenant_check_patient_duplicate(
     )
 
 
+def _patient_consultation_state(tenant_id: int, phone: str) -> Dict[str, Any]:
+    """État consultation du patient pour la dictée ambiante.
+
+    - `is_first_consultation` : aucune consultation enregistrée (même dégradée,
+      même "non renseigné") — c'est le rang de consultation qui fait foi, pas le
+      contenu du dossier (un patient importé avec antécédents mais zéro
+      consultation UWi reste en première consultation).
+    - `mesures_connues` : au moins un poids/taille relevé dans une consultation.
+    """
+    try:
+        consultations = list_patient_consultations(tenant_id, phone, limit=50)
+    except Exception:
+        consultations = []
+    mesures_connues = any(
+        (c.get("vitals") or {}).get("poids_kg") not in (None, "")
+        or (c.get("vitals") or {}).get("taille_cm") not in (None, "")
+        for c in consultations
+        if isinstance(c, dict)
+    )
+    return {
+        "is_first_consultation": len(consultations) == 0,
+        "mesures_connues": mesures_connues,
+    }
+
+
 @router.get("/patients/{phone}")
 def tenant_get_patient(
     phone: str,
@@ -3899,6 +3930,7 @@ def tenant_get_patient(
     profile = get_cabinet_client_by_phone(tenant_id, phone)
     if not profile:
         raise HTTPException(404, "Patient not found")
+    profile = {**profile, **_patient_consultation_state(tenant_id, phone)}
 
     if lightweight:
         docs = list_patient_documents(tenant_id, phone) if include_documents else []
@@ -4327,11 +4359,32 @@ class ConsultationIaBody(BaseModel):
     validated_by_practitioner: bool = False
 
 
+class ConsultationDicteeDossierBlockBody(BaseModel):
+    """Bloc durable validé en relecture de dictée, à upserter dans la fiche patient."""
+
+    field: Literal["allergies", "antecedents", "traitements", "mesures", "contexte"]
+    text: str = Field(default="", max_length=6000)
+    status: Literal["propose", "confirme", "non_renseigne", "modifie"] = "confirme"
+    structured: Optional[Dict[str, Any]] = None
+
+
+class ConsultationDicteeBody(BaseModel):
+    """Métadonnées de la dictée ambiante. Le transcript brut n'est JAMAIS transmis ni persisté."""
+
+    consent_patient: bool = False
+    degraded: bool = False
+    duration_seconds: Optional[int] = Field(default=None, ge=0, le=36000)
+    decision_tags: List[str] = Field(default_factory=list)
+    dossier_blocks: List[ConsultationDicteeDossierBlockBody] = Field(default_factory=list)
+
+
 class PatientConsultationCreateBody(BaseModel):
     appointment_id: Optional[str] = Field(default=None, max_length=120)
     date: Optional[str] = Field(default=None, max_length=10)
     mode_consultation: Literal["rapide", "complete"] = "rapide"
     motif: str = Field(..., min_length=1, max_length=240)
+    motif_source: Optional[Literal["uwi_suggestion", "praticien"]] = None
+    motif_raw_patient: Optional[str] = Field(default=None, max_length=1000)
     anamnese: str = Field(default="", max_length=12000)
     examen_clinique: ConsultationExamenCliniqueBody = Field(default_factory=ConsultationExamenCliniqueBody)
     impression_clinique: str = Field(default="", max_length=6000)
@@ -4339,6 +4392,7 @@ class PatientConsultationCreateBody(BaseModel):
     conduite_a_tenir: ConsultationConduiteBody = Field(default_factory=ConsultationConduiteBody)
     ia_uwi: Optional[ConsultationIaBody] = None
     note_praticien: Optional[str] = Field(default=None, max_length=12000)
+    dictee: Optional[ConsultationDicteeBody] = None
 
     @validator("date")
     def _validate_consultation_date(cls, value):
@@ -5198,6 +5252,78 @@ def _consultation_render_pdf_bytes(
     return buffer.getvalue()
 
 
+# Bloc dictée -> colonne durable de la fiche patient (cabinet_clients).
+_DICTEE_DOSSIER_FIELD_TO_PATIENT_COLUMN = {
+    "allergies": "allergies",
+    "antecedents": "antecedents_medicaux",
+    "traitements": "traitements",
+    "contexte": "facteurs_risque",
+}
+
+
+def _is_non_renseigne_trace(value: Any) -> bool:
+    """Trace « Non renseigné (interrogé le …) » : la question a été posée mais
+    reste ouverte — ce n'est pas une donnée à préserver."""
+    normalized = " ".join(str(value or "").split()).strip().lower()
+    normalized = unicodedata.normalize("NFD", normalized)
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return normalized.startswith("non renseigne")
+
+
+def _apply_dictation_dossier_blocks(
+    tenant_id: int,
+    phone: str,
+    consultation: Optional[Dict[str, Any]],
+    dictee: Optional[Dict[str, Any]],
+) -> None:
+    """Upsert des blocs `dest:dossier` validés en relecture de dictée dans la fiche patient.
+
+    - `non_renseigne` est tracé (horodaté) uniquement si le champ est vide ou ne
+      porte qu'une trace précédente : on sait que la question a été posée ce
+      jour-là, sans écraser une donnée existante.
+    - Un contenu existant est conservé : la nouvelle info est ajoutée à la suite
+      si elle n'y figure pas déjà (nouvelle allergie en consultation n). Une
+      trace « non renseigné » est remplacée, pas conservée.
+    - Les mesures (poids/taille) vivent dans les constantes de la consultation, pas ici.
+    - Best-effort : n'interrompt jamais la sauvegarde de la consultation.
+    """
+    try:
+        blocks = (dictee or {}).get("dossier_blocks") or []
+        if not blocks:
+            return
+        profile = get_cabinet_client_by_phone(tenant_id, phone) or {}
+        consultation_date = str((consultation or {}).get("consultation_date") or "").strip() or date.today().isoformat()
+        updates: Dict[str, str] = {}
+        for block in blocks:
+            field = str(block.get("field") or "").strip()
+            column = _DICTEE_DOSSIER_FIELD_TO_PATIENT_COLUMN.get(field)
+            if not column:
+                continue
+            status = str(block.get("status") or "confirme").strip()
+            existing = str(profile.get(column) or "").strip()
+            existing_is_trace = _is_non_renseigne_trace(existing)
+            if status == "non_renseigne":
+                if not existing or existing_is_trace:
+                    updates[column] = f"Non renseigné (interrogé le {consultation_date})"
+                continue
+            text = str(block.get("text") or "").strip()
+            if not text:
+                continue
+            if not existing or existing_is_trace:
+                updates[column] = text
+            elif text.lower() not in existing.lower():
+                updates[column] = f"{existing}\n{text}"
+        if updates:
+            update_patient_fields(tenant_id, phone, **updates)
+    except Exception:
+        logger.warning(
+            "dictation dossier upsert failed tenant=%s phone=%s",
+            tenant_id,
+            str(phone)[-4:] if phone else "?",
+            exc_info=True,
+        )
+
+
 @router.post("/patients/{phone}/consultations")
 def tenant_create_patient_consultation_route(
     phone: str,
@@ -5218,6 +5344,8 @@ def tenant_create_patient_consultation_route(
     # La consultation est persistée : on enrichit le contexte patient général
     # (synthèse médicale + dernier contexte) en best-effort, sans bloquer la réponse.
     _enrich_patient_context_from_consultation(tenant_id, phone, created, payload)
+    # Dictée ambiante : les blocs durables validés nourrissent la fiche patient.
+    _apply_dictation_dossier_blocks(tenant_id, phone, created, payload.get("dictee"))
     return {"ok": True, "consultation": created}
 
 
@@ -5502,6 +5630,29 @@ def tenant_consultation_reformulate_motif_route(
     except Exception as exc:
         logger.warning("consultation motif reformulate failed: %s", exc)
         raise HTTPException(503, "Reformulation indisponible.")
+
+
+@router.post("/consultations/structure-dictation")
+async def tenant_consultation_structure_dictation_route(
+    body: StructureDictationRequest,
+    auth: dict = Depends(require_tenant_auth),
+):
+    """Structuration de la dictée ambiante en blocs (note du jour + fiche patient).
+
+    Échec ou dépassement du plafond -> réponse dégradée : la dictée est conservée
+    telle quelle dans un unique bloc éditable. On ne perd JAMAIS une dictée.
+    """
+    _ = auth
+    try:
+        # Appel LLM bloquant exécuté hors de la boucle asyncio (thread dédié),
+        # plafond dur légèrement au-dessus du timeout client Anthropic (15 s).
+        return await asyncio.wait_for(
+            asyncio.to_thread(structure_dictation, body),
+            timeout=20.0,
+        )
+    except Exception as exc:
+        logger.warning("dictation structuring degraded fallback: %s", exc)
+        return {"blocks": build_degraded_blocks(body.transcript), "degraded": True}
 
 
 def _build_consultation_prefill_payload(

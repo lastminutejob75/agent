@@ -40,6 +40,7 @@ import PatientAdminQuestionnaireCard from "../components/patients/PatientAdminQu
 import PatientMedicalQuestionnaireCard from "../components/patients/PatientMedicalQuestionnaireCard.jsx";
 import PatientContextSummary from "../components/patients/PatientContextSummary.jsx";
 import FicheConsultationUWI from "../components/consultations/FicheConsultationUWI.jsx";
+import ConsultationDictee from "../components/consultations/ConsultationDictee.jsx";
 import {
   checkPatientDuplicates,
   formatPatientDuplicateConflict,
@@ -2463,8 +2464,13 @@ export default function PatientDashboardPage() {
         "dernier_contexte_consultation",
         "last_consultation_context",
       ]),
+      // Calculés côté backend (GET /patients/{phone}) — repli sur la liste déjà chargée.
+      is_first_consultation: typeof (row as { is_first_consultation?: unknown }).is_first_consultation === "boolean"
+        ? Boolean((row as { is_first_consultation?: unknown }).is_first_consultation)
+        : patientConsultations.length === 0,
+      mesures_connues: Boolean((row as { mesures_connues?: unknown }).mesures_connues),
     };
-  }, [patientCabinetRow, tenantPatientPhone, displayHero?.name]);
+  }, [patientCabinetRow, tenantPatientPhone, displayHero?.name, patientConsultations.length]);
 
   const openConsultationModal = useCallback((preset?: Partial<ConsultationOpenDraft>) => {
     if (!tenantPatientPhone) {
@@ -2550,7 +2556,10 @@ export default function PatientDashboardPage() {
     lastSavedConsultationId,
   ]);
 
-  const submitConsultationForm = useCallback(async (draft: Record<string, unknown>) => {
+  const submitConsultationForm = useCallback(async (
+    draft: Record<string, unknown>,
+    options?: { keepOpen?: boolean },
+  ) => {
     if (!tenantPatientPhone) {
       const message = "Sélectionnez d'abord un patient.";
       notify(message, { sticky: true });
@@ -2660,6 +2669,10 @@ export default function PatientDashboardPage() {
           }
         : undefined,
       note_praticien: String(draft?.note_praticien || "").trim() || undefined,
+      // Traçabilité motif + métadonnées dictée ambiante (jamais de transcript brut).
+      motif_source: draft?.motif_source === "uwi_suggestion" ? "uwi_suggestion" : undefined,
+      motif_raw_patient: String(draft?.motif_raw_patient || "").trim() || undefined,
+      dictee: draft?.dictee && typeof draft.dictee === "object" ? draft.dictee : undefined,
     };
     const editingConsultationId = Number(String(consultationInitialDraft.consultationId || "").trim());
     const isEditingConsultation = Number.isFinite(editingConsultationId) && editingConsultationId > 0;
@@ -2735,11 +2748,13 @@ export default function PatientDashboardPage() {
       } else {
         notify(`${isEditingConsultation ? "Fiche consultation mise à jour" : "Fiche consultation enregistrée"}. Retrouvez-la dans "Dossier consultations".`);
       }
-      setModal(null);
+      if (!options?.keepOpen) {
+        setModal(null);
+        window.setTimeout(() => {
+          consultationDossierRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 120);
+      }
       setSummaryRefreshNonce((value) => value + 1);
-      window.setTimeout(() => {
-        consultationDossierRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 120);
       setConsultationInitialDraft((prev) => ({
         ...CONSULTATION_DRAFT_EMPTY,
         consultationId: "",
@@ -2820,6 +2835,20 @@ export default function PatientDashboardPage() {
     },
     [tenantPatientPhone],
   );
+
+  const structureConsultationDictation = useCallback(async (payload: {
+    transcript: string;
+    motif_choisi?: string | null;
+    motif_patient_verbatim?: string | null;
+    dossier_state?: Record<string, boolean>;
+  }) => {
+    return api.tenantStructureConsultationDictation({
+      transcript: String(payload?.transcript || ""),
+      motif_choisi: payload?.motif_choisi || undefined,
+      motif_patient_verbatim: payload?.motif_patient_verbatim || undefined,
+      dossier_state: payload?.dossier_state || undefined,
+    }) as Promise<{ blocks?: unknown[]; degraded?: boolean }>;
+  }, []);
 
   useEffect(() => {
     const wantsConsultation = (searchParams.get("consultation") || "").trim() === "1";
@@ -5597,25 +5626,51 @@ export default function PatientDashboardPage() {
           >
             ×
           </button>
-          <FicheConsultationUWI
-            patient={consultationPatient}
-            saving={consultationSaving}
-            existingNextAppointment={consultationExistingNextAppointment}
-            onOpenCreateBooking={() => setCreatePatientBookingOpen(true)}
-            initialDraft={{
-              consultation_id: consultationInitialDraft.consultationId,
-              date: consultationInitialDraft.date,
-              motif: consultationInitialDraft.motif,
-              appointment_id: consultationInitialDraft.appointmentId,
-              source_consultation_id: consultationInitialDraft.sourceConsultationId,
-              prefill: consultationInitialDraft.prefill,
-            }}
-            onLoadPrefill={loadConsultationPrefill}
-            onReformulateMotif={reformulateConsultationMotif}
-            onTranscribe={transcribeConsultationAudio}
-            onGenerateSummary={generateConsultationSummary}
-            onSave={(payload) => submitConsultationForm((payload || {}) as Record<string, unknown>)}
-          />
+          {!consultationInitialDraft.consultationId && !consultationInitialDraft.prefill ? (
+            /* Nouvelle consultation : flux "dictée ambiante" en 4 moments. */
+            <div className="min-h-full bg-gradient-to-b from-white via-[#F7F9FA] to-[#EEF6F6]">
+              <ConsultationDictee
+                patient={consultationPatient}
+                saving={consultationSaving}
+                initialDraft={{
+                  date: consultationInitialDraft.date,
+                  motif: consultationInitialDraft.motif,
+                  appointment_id: consultationInitialDraft.appointmentId,
+                }}
+                onLoadPrefill={loadConsultationPrefill}
+                onReformulateMotif={reformulateConsultationMotif}
+                onTranscribe={transcribeConsultationAudio}
+                onStructure={structureConsultationDictation}
+                onSave={async (payload: Record<string, unknown>) => {
+                  await submitConsultationForm(payload || {}, { keepOpen: true });
+                  // Les blocs dossier ont pu enrichir la fiche patient côté serveur.
+                  setPatientFetchNonce((n) => n + 1);
+                }}
+                onClose={() => setModal(null)}
+              />
+            </div>
+          ) : (
+            /* Modification / duplication d'une fiche existante : formulaire classique. */
+            <FicheConsultationUWI
+              patient={consultationPatient}
+              saving={consultationSaving}
+              existingNextAppointment={consultationExistingNextAppointment}
+              onOpenCreateBooking={() => setCreatePatientBookingOpen(true)}
+              initialDraft={{
+                consultation_id: consultationInitialDraft.consultationId,
+                date: consultationInitialDraft.date,
+                motif: consultationInitialDraft.motif,
+                appointment_id: consultationInitialDraft.appointmentId,
+                source_consultation_id: consultationInitialDraft.sourceConsultationId,
+                prefill: consultationInitialDraft.prefill,
+              }}
+              onLoadPrefill={loadConsultationPrefill}
+              onReformulateMotif={reformulateConsultationMotif}
+              onTranscribe={transcribeConsultationAudio}
+              onGenerateSummary={generateConsultationSummary}
+              onSave={(payload) => submitConsultationForm((payload || {}) as Record<string, unknown>)}
+            />
+          )}
         </div>
       )}
 
