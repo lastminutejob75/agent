@@ -172,7 +172,7 @@ export function buildDossierTiles(blocks) {
       key: "poids",
       blockId: mesures.id,
       label: "Poids",
-      value: poidsNr ? NR_TEXT : `${String(structured.poids_kg).replace(".", ",")} kg`,
+      value: poidsNr ? "Non renseigné" : `${String(structured.poids_kg).replace(".", ",")} kg`,
       status: poidsNr ? "non_renseigne" : mesures.status,
       confirmed: true,
       critical: false,
@@ -184,7 +184,7 @@ export function buildDossierTiles(blocks) {
       key: "taille",
       blockId: mesures.id,
       label: "Taille",
-      value: tailleNr ? NR_TEXT : `${String(structured.taille_cm).replace(".", ",")} cm`,
+      value: tailleNr ? "Non renseigné" : `${String(structured.taille_cm).replace(".", ",")} cm`,
       status: tailleNr ? "non_renseigne" : mesures.status,
       confirmed: true,
       critical: false,
@@ -208,17 +208,18 @@ export function buildDossierTiles(blocks) {
   }
   for (const block of dossier) {
     if (block.field === "mesures") continue;
+    // Tuile synthétique jamais touchée : proposition vide, ni confirmée ni « non renseigné ».
+    const emptyProposal = Boolean(block.synthetic) && block.status === "propose" && !String(block.text || "").trim();
     tiles.push({
       key: block.field,
       blockId: block.id,
       label: block.label || FIELD_LABELS[block.field] || block.field,
-      value: block.status === "non_renseigne" || (!block.text && block.synthetic)
-        ? (block.status === "non_renseigne" ? NR_TEXT : "À renseigner")
-        : block.text,
+      value: block.status === "non_renseigne" ? "Non renseigné" : (emptyProposal ? "À renseigner" : block.text),
       status: block.status,
       confirmed: block.confirmed,
       critical: block.critical,
       danger: block.danger,
+      pending: emptyProposal,
       nrable: true,
       calc: false,
     });

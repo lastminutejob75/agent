@@ -272,6 +272,7 @@ function tileStatusLabel(tile) {
   if (tile.calc) return tile.missing ? "en attente du poids/taille" : "calculé automatiquement";
   if (tile.status === "non_renseigne") return "non renseigné";
   if (!tile.confirmed) return tile.danger ? "sécurité — à confirmer" : "à confirmer";
+  if (tile.pending) return "à renseigner — optionnel";
   return tile.status === "modifie" ? "corrigé" : "confirmé";
 }
 
@@ -292,6 +293,18 @@ export default function ConsultationDictee({
     () => new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
     [],
   );
+
+  // Le composant est rendu dans un modal scrollable (overflow-auto) :
+  // window.scrollTo n'y suffit pas, on remonte aussi le conteneur du modal.
+  const rootRef = useRef(null);
+  const scrollToTop = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    let node = rootRef.current?.parentElement;
+    while (node) {
+      if (node.scrollTop > 0) node.scrollTo({ top: 0, behavior: "smooth" });
+      node = node.parentElement;
+    }
+  }, []);
 
   // « 1re consultation » = aucune consultation enregistrée pour ce patient.
   // Calculé côté backend (GET patient), jamais déduit du contenu du dossier.
@@ -494,8 +507,8 @@ export default function ConsultationDictee({
     setSelectedTileKey(null);
     setRawOpen(false);
     setPhase("review");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [onTranscribe, onStructure, motifChoisi, motifRawPatient, dossierState, checklistBase, firstConsultation, patient?.allergies]);
+    scrollToTop();
+  }, [onTranscribe, onStructure, motifChoisi, motifRawPatient, dossierState, checklistBase, firstConsultation, patient?.allergies, scrollToTop]);
 
   const startListen = useCallback(async () => {
     if (!consent) return;
@@ -520,11 +533,11 @@ export default function ConsultationDictee({
         setElapsed(elapsedRef.current);
       }, 1000);
       setPhase("listen");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollToTop();
     } catch (err) {
       setDictError(buildDictationAccessError(err));
     }
-  }, [consent, runStructuring, stopStream]);
+  }, [consent, runStructuring, stopStream, scrollToTop]);
 
   const stopListen = useCallback(() => {
     clearInterval(timerRef.current);
@@ -730,7 +743,7 @@ export default function ConsultationDictee({
       // La transcription brute est un brouillon : jamais conservée après enregistrement.
       setTranscript("");
       setPhase("done");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollToTop();
     } catch (err) {
       setSaveError(String(err?.message || "Impossible d'enregistrer la consultation."));
     } finally {
@@ -738,7 +751,7 @@ export default function ConsultationDictee({
     }
   }, [
     pendingLabels.length, busy, blocks, decisionTags, consultDate, initialDraft?.appointment_id,
-    motifSource, motifRawPatient, degraded, onSave, dossierBlocksToSave, firstConsultation,
+    motifSource, motifRawPatient, degraded, onSave, dossierBlocksToSave, firstConsultation, scrollToTop,
   ]);
 
   // ---- CTA unique ----
@@ -805,7 +818,7 @@ export default function ConsultationDictee({
     : firstConsultation;
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-[560px] flex-col text-[#101828]">
+    <div ref={rootRef} className="mx-auto flex min-h-dvh w-full max-w-[560px] flex-col text-[#101828]">
       {/* ---- header ---- */}
       <header className="sticky top-0 z-20 border-b border-[#EAECF0]/90 bg-[#F7F9FA]/90 px-4 pb-2.5 pt-3.5 backdrop-blur-xl">
         <div className="flex flex-wrap items-baseline gap-2">
@@ -822,7 +835,7 @@ export default function ConsultationDictee({
         <div className="mt-0.5 text-[13px] font-extrabold text-[#087981]">{PHASE_LABELS[phase]}</div>
       </header>
 
-      <main className="flex-1 px-4 pb-[132px]">
+      <main className="flex-1 px-4 pb-6">
         {/* ================= MOMENT 1 : PREP ================= */}
         {phase === "prep" ? (
           <section className="flex flex-col gap-3 pt-4">
@@ -1267,8 +1280,16 @@ export default function ConsultationDictee({
         })() : null}
       </main>
 
-      {/* ---- LE bouton (état d'avancement : uniquement la note ci-dessous) ---- */}
-      <div className="fixed inset-x-0 bottom-0 z-[105] bg-gradient-to-b from-transparent via-[#F7F9FA]/95 to-[#F7F9FA] px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3">
+      {/* ---- LE bouton (état d'avancement : uniquement la note ci-dessous) ----
+          Sticky (pas fixed) : le modal parent a un backdrop-blur qui ferait
+          défiler un élément fixed avec le contenu. Le dock reste collé en bas
+          du conteneur scrollable, comme la barre de la maquette. */}
+      <div className="sticky bottom-0 z-[105] bg-[linear-gradient(180deg,rgba(247,249,250,0),rgba(247,249,250,0.96)_34%)] px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3">
+        {toast ? (
+          <div className="absolute -top-14 left-1/2 z-[110] -translate-x-1/2 whitespace-nowrap rounded-[14px] bg-[#0A1628] px-[18px] py-3 text-sm font-extrabold text-white shadow-lg">
+            {toast}
+          </div>
+        ) : null}
         <div className="mx-auto flex max-w-[560px] flex-col gap-2">
           <div className={["min-h-4 text-center text-[12.5px] font-bold", noteClass].join(" ")}>{note}</div>
           <button
@@ -1289,12 +1310,6 @@ export default function ConsultationDictee({
           </button>
         </div>
       </div>
-
-      {toast ? (
-        <div className="fixed bottom-[calc(102px+env(safe-area-inset-bottom))] left-1/2 z-[110] -translate-x-1/2 rounded-[14px] bg-[#0A1628] px-[18px] py-3 text-sm font-extrabold text-white shadow-lg">
-          {toast}
-        </div>
-      ) : null}
     </div>
   );
 }
