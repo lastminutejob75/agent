@@ -497,14 +497,15 @@ function buildPatientHeroFromProfile(p: Record<string, unknown> | undefined, fal
   return { name, phone: tel, initials: initialsFromFullName(name) };
 }
 
-const viewTabs: Array<{ id: ViewType; label: string; shortLabel: string }> = [
-  { id: "overview", label: "Vue d'ensemble", shortLabel: "Aperçu" },
-  { id: "appointments", label: "Rendez-vous", shortLabel: "RDV" },
-  { id: "documents", label: "Documents", shortLabel: "Docs" },
-  { id: "history", label: "Historique", shortLabel: "Historique" },
-];
-
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
+
+function isMobilePatientDashboardViewport() {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches;
+}
+
+function shouldLoadPatientOverviewData(activeView: ViewType) {
+  return activeView === "overview" || activeView === "documents" || !isMobilePatientDashboardViewport();
+}
 
 function readRequestStatusOverrides() {
   if (typeof window === "undefined") return {};
@@ -2033,14 +2034,14 @@ export default function PatientDashboardPage() {
     syncPatientEmailDraft("");
     setPatientHistory([]);
     setDocumentsLoading(false);
-    setNotesLoading(activeView === "overview");
+    setNotesLoading(shouldLoadPatientOverviewData(activeView));
     setNoteDeletingId(null);
     setNoteUpdatingId(null);
     setNoteEditingId(null);
     setNoteEditDraft("");
     setNoteExpandedIds({});
 
-    const notesPromise = activeView === "overview"
+    const notesPromise = shouldLoadPatientOverviewData(activeView)
       ? api.tenantGetPatientNotes(tenantPatientPhone, "?limit=40").catch(() => ({ items: [] }))
       : Promise.resolve({ items: [] as unknown[] });
 
@@ -2056,7 +2057,7 @@ export default function PatientDashboardPage() {
           urlPatientHero: buildPatientHeroFromProfile(p, tenantPatientPhone),
           patientEmail: String(p?.email || ""),
           documents: cached?.documents?.length ? cached.documents : [],
-          patientNotes: activeView === "overview"
+          patientNotes: shouldLoadPatientOverviewData(activeView)
             ? mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : [])
             : (cached?.patientNotes || []),
           patientInsightTags: normalizePatientInsightTags(res?.insights?.tags),
@@ -2068,7 +2069,7 @@ export default function PatientDashboardPage() {
           ...bundle,
           nonce: patientFetchNonce,
           ts: Date.now(),
-          hasNotes: activeView === "overview",
+          hasNotes: shouldLoadPatientOverviewData(activeView),
         });
       })
       .catch(async (e: unknown) => {
@@ -2079,7 +2080,7 @@ export default function PatientDashboardPage() {
         if (cancelled) return;
         const bundle = emptyPatientDetailBundle({
           tenantPatientNotFound: status === 404,
-          patientNotes: activeView === "overview"
+          patientNotes: shouldLoadPatientOverviewData(activeView)
             ? mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : [])
             : [],
         });
@@ -2090,7 +2091,7 @@ export default function PatientDashboardPage() {
           ...bundle,
           nonce: patientFetchNonce,
           ts: Date.now(),
-          hasNotes: activeView === "overview",
+          hasNotes: shouldLoadPatientOverviewData(activeView),
         });
       })
       .finally(() => {
@@ -2121,7 +2122,7 @@ export default function PatientDashboardPage() {
       setDocumentsLoading(false);
       return undefined;
     }
-    const needDocs = activeView === "overview" || activeView === "documents";
+    const needDocs = shouldLoadPatientOverviewData(activeView);
     if (!needDocs) return undefined;
 
     const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
@@ -3622,7 +3623,9 @@ export default function PatientDashboardPage() {
       }
       setPatientFetchNonce((n) => n + 1);
       setModal(null);
-      setActiveView("documents");
+      if (isMobilePatientDashboardViewport()) {
+        setActiveView("documents");
+      }
       notify("Document ajouté");
     } catch (e) {
       notify((e as Error)?.message || "Erreur upload document");
@@ -4226,7 +4229,7 @@ export default function PatientDashboardPage() {
                         }));
                         syncPatientEmailDraft("");
                         setDocumentsLoading(true);
-                        setNotesLoading(activeView === "overview");
+                        setNotesLoading(shouldLoadPatientOverviewData(activeView));
                       }
                       const np = new URLSearchParams(searchParams);
                       np.set("phone", patient.phone);
@@ -4736,37 +4739,6 @@ export default function PatientDashboardPage() {
           </section>
 
           <section className="mt-3.5 overflow-hidden rounded-[24px] border border-[#E2EAF4] bg-white shadow-sm sm:mt-5 sm:rounded-[26px]">
-            <div className="flex snap-x snap-mandatory overflow-x-auto border-b border-[#EEF3F8] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {viewTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveView(tab.id)}
-                  className={cx(
-                    "relative flex h-14 min-w-[25%] shrink-0 snap-start items-center justify-center gap-2 px-2 text-sm font-black transition sm:min-w-0 sm:flex-1 sm:gap-2.5 sm:px-4",
-                    activeView === tab.id ? "text-[#008EA1]" : "text-[#42536E] hover:bg-[#F8FBFD]",
-                  )}
-                >
-                  <HeroSvgIcon
-                    name={
-                      tab.id === "overview"
-                        ? "overview"
-                        : tab.id === "appointments"
-                          ? "calendar"
-                          : tab.id === "documents"
-                            ? "documents"
-                            : "history"
-                    }
-                  />
-                  <span className="hidden sm:inline">{tab.label}</span>
-                  <span className="sm:hidden">{tab.shortLabel}</span>
-                  {activeView === tab.id ? (
-                    <span className="absolute bottom-0 left-3 right-3 h-1 rounded-t-full bg-[#009CA4] sm:left-6 sm:right-6" />
-                  ) : null}
-                </button>
-              ))}
-            </div>
-
             <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3 sm:gap-4 sm:p-5">
               <PrimaryCTA variant="note" onClick={() => setModal("addNote")}>✎ Ajouter une note</PrimaryCTA>
               <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
@@ -4888,8 +4860,7 @@ export default function PatientDashboardPage() {
             </section>
           ) : null}
 
-          {activeView === "overview" && (
-            <div className="mt-6 hidden space-y-6 xl:block">
+          <div className="mt-6 hidden space-y-6 xl:block">
               <div className="space-y-6">
                 <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-6 shadow-sm">
                   <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -4965,13 +4936,6 @@ export default function PatientDashboardPage() {
                         <h3 className="text-sm font-black uppercase tracking-wide text-[#475569]">
                           Autres rendez-vous à venir ({upcomingPatientAppointments.length - 1})
                         </h3>
-                        <button
-                          type="button"
-                          onClick={() => setActiveView("appointments")}
-                          className="rounded-xl border border-[#91D9E3] px-3 py-1.5 text-xs font-black text-[#008EA1] hover:bg-[#E9FAFC]"
-                        >
-                          Tous en détail
-                        </button>
                       </div>
                       <ul className="m-0 list-none space-y-3 p-0">
                         {upcomingPatientAppointments.slice(1).map(({ slot: sRow, start: dt }) => {
@@ -5286,6 +5250,38 @@ export default function PatientDashboardPage() {
                   </div>
                 </section>
 
+                <section className="rounded-[28px] border border-[#E2EAF4] bg-white p-6 shadow-sm">
+                  <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-2xl font-black">Documents du patient</h2>
+                      {!documentsLoading ? (
+                        <p className="mt-2 text-sm font-bold text-[#008EA1]">
+                          {documents.length} document{documents.length > 1 ? "s" : ""} enregistré{documents.length > 1 ? "s" : ""}
+                        </p>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setModal("addDocument")}
+                      className="rounded-xl border border-[#6AD58B] bg-white px-4 py-2 text-sm font-black text-[#0EA348] hover:bg-[#F0FFF5]"
+                    >
+                      ▤ Ajouter un document
+                    </button>
+                  </div>
+                  <PatientDocumentsList
+                    documents={documents}
+                    loading={documentsLoading}
+                    patientEmail={patientEmail}
+                    documentSendingId={documentSendingId}
+                    documentDeletingId={documentDeletingId}
+                    onPreview={(doc) => void openPreview(doc)}
+                    onDownload={(doc) => void downloadDocument(doc)}
+                    onSend={(docId) => void sendDocument(docId)}
+                    onDelete={(docId) => void deleteDocument(docId)}
+                    onAddDocument={() => setModal("addDocument")}
+                  />
+                </section>
+
                 <PatientQuestionnaireCard
                   phone={tenantPatientPhone}
                   patientEmail={patientEmail}
@@ -5325,154 +5321,7 @@ export default function PatientDashboardPage() {
                 </div>
               </div>
             </div>
-          )}
 
-          {activeView === "appointments" && (
-            <section className="mt-6 hidden rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8 xl:block">
-              <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-black">Rendez-vous du patient</h2>
-                  {tenantPatientPhone && !patientAgendaLoading ? (
-                    <p className="mt-2 text-sm font-bold text-[#008EA1]">
-                      {upcomingPatientAppointments.length} rendez-vous à venir (fenêtre 60 jours)
-                    </p>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveView("overview")}
-                  className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]"
-                >
-                  ◂ Retour vue d’ensemble
-                </button>
-              </div>
-              <p className="mb-4 text-sm font-semibold text-[#61708B]">
-                Rendez-vous rattachés au numéro de ce patient dans l&apos;agenda du cabinet (60 prochains jours).
-              </p>
-              {!tenantPatientPhone ? (
-                <p className="text-sm font-semibold text-[#61708B]">Sélectionnez un patient.</p>
-              ) : patientAgendaLoading ? (
-                <p className="text-sm font-semibold text-[#61708B]">Chargement…</p>
-              ) : upcomingPatientAppointments.length === 0 && pastPatientAppointments.length === 0 ? (
-                <p className="text-sm font-semibold text-[#61708B]">
-                  Aucun rendez-vous trouvé avec ce téléphone. Vérifiez que chaque RDV comporte bien le numéro en contact dans l&apos;agenda ou Google&nbsp;Calendar.
-                </p>
-              ) : (
-              <>
-              {upcomingPatientAppointments.length > 0 ? (
-              <div className="space-y-3 sm:space-y-4">
-                {upcomingPatientAppointments.map(({ slot, start }) => {
-                  const rowKey = `${String(slot.event_id || slot.appointment_id || "")}-${start.toISOString()}`;
-                  const dateStr = start.toLocaleDateString("fr-FR", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  });
-                  return (
-                  <div key={rowKey} className="grid grid-cols-1 gap-3 rounded-2xl border border-[#EEF3F8] p-4 text-sm sm:grid-cols-[120px_90px_1fr_160px_auto] sm:items-center sm:gap-3">
-                    <div className="flex items-center justify-between gap-3 sm:contents">
-                      <b>{dateStr}</b>
-                      <b>{formatAgendaSlotHour(start)}</b>
-                    </div>
-                    <span>{agendaSlotMotif(slot) || "Consultation"}</span>
-                    <span className="rounded-lg bg-[#F2F8FA] px-3 py-2 text-center font-black text-[#007E8C]">{patientAgendaRowStatus(slot, start)}</span>
-                    {renderPatientApptActions(slot, start, { compact: true })}
-                  </div>
-                  );
-                })}
-              </div>
-              ) : null}
-
-              {pastPatientAppointments.length > 0 ? (
-                <div className={upcomingPatientAppointments.length > 0 ? "mt-8 border-t border-[#EEF3F8] pt-6" : ""}>
-                  <h3 className="mb-4 text-lg font-black text-[#0A1628]">Rendez-vous passés</h3>
-                  <p className="mb-4 text-sm font-semibold text-[#61708B]">
-                    Signalez une absence pour alimenter le tag « Risque no-show » (à partir de 2 absences notées).
-                  </p>
-                  <div className="space-y-3 sm:space-y-4">
-                    {pastPatientAppointments.map(({ start, key }) => {
-                      const rowKey = key;
-                      const dateStr = start.toLocaleDateString("fr-FR", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      });
-                      const saving = absenceNoteSavingKey === key;
-                      return (
-                        <div key={rowKey} className="grid grid-cols-1 gap-3 rounded-2xl border border-[#EEF3F8] p-4 text-sm sm:grid-cols-[120px_90px_1fr_auto] sm:items-center sm:gap-3">
-                          <div className="flex items-center justify-between gap-3 sm:contents">
-                            <b>{dateStr}</b>
-                            <b>{formatAgendaSlotHour(start)}</b>
-                          </div>
-                          <span>Consultation</span>
-                          <button
-                            type="button"
-                            disabled={saving}
-                            onClick={() => void reportAppointmentAbsence(start)}
-                            className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-xs font-black text-[#B91C1C] hover:bg-[#FEE2E2] disabled:opacity-60"
-                          >
-                            {saving ? "Enregistrement…" : "Signaler absence"}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-              </>
-              )}
-            </section>
-          )}
-
-          {activeView === "history" && (
-            <section className="mt-6 hidden rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8 xl:block">
-              <h2 className="mb-5 text-2xl font-black">Historique des interactions</h2>
-              <HistoryList items={patientHistory} loading={patientHistoryLoading} />
-            </section>
-          )}
-
-          {activeView === "documents" && (
-            <section className="mt-6 hidden rounded-[28px] border border-[#E2EAF4] bg-white p-4 shadow-sm sm:p-6 lg:p-8 xl:block">
-              <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-black">Documents du patient</h2>
-                  {!documentsLoading ? (
-                    <p className="mt-2 text-sm font-bold text-[#008EA1]">
-                      {documents.length} document{documents.length > 1 ? "s" : ""} enregistré{documents.length > 1 ? "s" : ""}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setModal("addDocument")}
-                    className="rounded-xl border border-[#6AD58B] bg-white px-4 py-2 text-sm font-black text-[#0EA348] hover:bg-[#F0FFF5]"
-                  >
-                    ▤ Ajouter un document
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveView("overview")}
-                    className="rounded-xl border border-[#B6C3D7] px-4 py-2 text-sm font-black text-[#53647F] hover:bg-[#F8FAFC]"
-                  >
-                    ◂ Retour vue d&apos;ensemble
-                  </button>
-                </div>
-              </div>
-              <PatientDocumentsList
-                documents={documents}
-                loading={documentsLoading}
-                patientEmail={patientEmail}
-                documentSendingId={documentSendingId}
-                documentDeletingId={documentDeletingId}
-                onPreview={(doc) => void openPreview(doc)}
-                onDownload={(doc) => void downloadDocument(doc)}
-                onSend={(docId) => void sendDocument(docId)}
-                onDelete={(docId) => void deleteDocument(docId)}
-                onAddDocument={() => setModal("addDocument")}
-              />
-            </section>
-          )}
         </main>
       </div>
 
@@ -5718,7 +5567,16 @@ export default function PatientDashboardPage() {
           </div>
           <p className="mt-4 text-center text-sm text-[#61708B]">
             Le document sera visible dans{" "}
-            <button type="button" onClick={() => { setModal(null); setActiveView("documents"); }} className="font-black text-[#008EA1] underline">
+            <button
+              type="button"
+              onClick={() => {
+                setModal(null);
+                if (isMobilePatientDashboardViewport()) {
+                  setActiveView("documents");
+                }
+              }}
+              className="font-black text-[#008EA1] underline"
+            >
               Consulter les documents
             </button>
             .
