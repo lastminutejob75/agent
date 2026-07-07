@@ -9,6 +9,7 @@ from backend.services.dictation_structuring_service import (
     StructureDictationRequest,
     build_degraded_blocks,
     build_structure_user_prompt,
+    clean_block_structured,
     compute_imc,
     sanitize_blocks,
     span_in_transcript,
@@ -131,6 +132,71 @@ def test_sanitize_blocks_rejects_unknown_field_and_dedupes():
     assert blocks[0]["text"] == "Premier."
 
 
+def test_clean_block_structured_examen_bounds_and_types():
+    structured = clean_block_structured(
+        "examen",
+        {"pa_systolique": "128", "pa_diastolique": 76, "fc_bpm": 500, "temperature_c": "37,2", "autre": "x"},
+    )
+    assert structured == {"pa_systolique": 128, "pa_diastolique": 76, "temperature_c": 37.2}
+
+
+def test_clean_block_structured_decision_whitelist():
+    structured = clean_block_structured(
+        "decision",
+        {
+            "prescription": " Paracétamol 1 g ",
+            "examens_demandes": ["NFS", "", "CRP"],
+            "prochain_rdv": "2026-07-21",
+            "suivi_consignes": "Reconsulter si aggravation",
+            "injected": "hack",
+        },
+    )
+    assert structured == {
+        "prescription": "Paracétamol 1 g",
+        "examens_demandes": ["NFS", "CRP"],
+        "prochain_rdv": "2026-07-21",
+        "suivi_consignes": "Reconsulter si aggravation",
+    }
+    assert clean_block_structured("decision", {"prochain_rdv": "21/07/2026"}) is None
+
+
+def test_clean_block_structured_antecedents_and_contexte_separent_les_categories():
+    antecedents = clean_block_structured(
+        "antecedents",
+        {"medicaux": "HTA.", "chirurgicaux": "Appendicectomie (2010).", "familiaux": "HTA chez le père."},
+    )
+    assert antecedents == {
+        "medicaux": "HTA.",
+        "chirurgicaux": "Appendicectomie (2010).",
+        "familiaux": "HTA chez le père.",
+    }
+    contexte = clean_block_structured(
+        "contexte",
+        {"mode_de_vie": "Enseignante, tabac 5/j.", "points_attention": "Surveiller TA.", "profession": "x"},
+    )
+    assert contexte == {"mode_de_vie": "Enseignante, tabac 5/j.", "points_attention": "Surveiller TA."}
+
+
+def test_sanitize_blocks_keeps_structured_for_examen_and_decision():
+    raw = [
+        {
+            "field": "examen",
+            "text": "Abdomen souple.",
+            "sourceSpans": ["Abdomen souple"],
+            "structured": {"pa_systolique": 128, "pa_diastolique": 76},
+        },
+        {
+            "field": "decision",
+            "text": "Surveillance, reconsulter si aggravation.",
+            "sourceSpans": ["Conseils de surveillance, reconsulter si aggravation"],
+            "structured": {"suivi_consignes": "Reconsulter si aggravation"},
+        },
+    ]
+    blocks = {b["field"]: b for b in sanitize_blocks(raw, TRANSCRIPT)}
+    assert blocks["examen"]["structured"] == {"pa_systolique": 128, "pa_diastolique": 76}
+    assert blocks["decision"]["structured"] == {"suivi_consignes": "Reconsulter si aggravation"}
+
+
 def test_build_degraded_blocks_keeps_full_transcript():
     blocks = build_degraded_blocks(TRANSCRIPT)
     assert len(blocks) == 1
@@ -242,6 +308,100 @@ def test_apply_dictation_dossier_blocks_replaces_previous_non_renseigne_trace():
 
     assert captured["allergies"] == "Pénicilline"
     assert captured["traitements"] == "Non renseigné (interrogé le 2026-07-06)"
+
+
+def test_apply_dictation_dossier_blocks_routes_structured_sub_fields():
+    """Le structured antecedents/contexte route vers les bonnes colonnes :
+    médicaux / chirurgicaux séparés, familiaux vers facteurs de risque,
+    mode de vie et points d'attention jamais mélangés."""
+    from unittest.mock import patch
+
+    from backend.routes.tenant import _apply_dictation_dossier_blocks
+
+    profile = {
+        "antecedents_medicaux": "",
+        "antecedents_chirurgicaux": "",
+        "facteurs_risque": "",
+        "points_attention": "",
+    }
+    captured = {}
+
+    def fake_update(tenant_id, phone, **kwargs):
+        captured.update(kwargs)
+        return profile
+
+    dictee = {
+        "dossier_blocks": [
+            {
+                "field": "antecedents",
+                "text": "HTA. Appendicectomie (2010). HTA chez le père.",
+                "status": "confirme",
+                "structured": {
+                    "medicaux": "HTA.",
+                    "chirurgicaux": "Appendicectomie (2010).",
+                    "familiaux": "HTA chez le père.",
+                },
+            },
+            {
+                "field": "contexte",
+                "text": "Enseignante, tabac 5/j. Surveiller la TA.",
+                "status": "confirme",
+                "structured": {
+                    "mode_de_vie": "Enseignante, tabac 5/j.",
+                    "points_attention": "Surveiller la TA.",
+                },
+            },
+        ]
+    }
+    with patch("backend.routes.tenant.get_cabinet_client_by_phone", return_value=profile):
+        with patch("backend.routes.tenant.update_patient_fields", side_effect=fake_update):
+            _apply_dictation_dossier_blocks(1, "0600000000", {"consultation_date": "2026-07-07"}, dictee)
+
+    assert captured["antecedents_medicaux"] == "HTA."
+    assert captured["antecedents_chirurgicaux"] == "Appendicectomie (2010)."
+    assert captured["facteurs_risque"] == "ATCD familiaux : HTA chez le père.\nEnseignante, tabac 5/j."
+    assert captured["points_attention"] == "Surveiller la TA."
+
+
+def test_strip_legacy_consultation_markers_and_date_fr():
+    from backend.routes.tenant import _format_date_fr, _strip_legacy_consultation_markers
+
+    polluted = (
+        "Derniere consultation: 07/07/2026 | Motif: Stress | Impression: À explorer\n\n"
+        "Dernière consultation : 24/06/2026 | Motif: Consultation\n\n"
+        "Diabète de type 2 suivi depuis 2020."
+    )
+    assert _strip_legacy_consultation_markers(polluted) == "Diabète de type 2 suivi depuis 2020."
+    assert _strip_legacy_consultation_markers("") == ""
+    assert _format_date_fr("2026-07-07") == "07/07/2026"
+    assert _format_date_fr("pas une date") == "pas une date"
+
+
+def test_enrich_patient_context_updates_last_context_without_stacking_synthese():
+    """Le dernier contexte est remplacé ; la synthèse n'est plus empilée
+    (elle est seulement nettoyée des anciens marqueurs)."""
+    from unittest.mock import patch
+
+    from backend.routes.tenant import _enrich_patient_context_from_consultation
+
+    profile = {"synthese_medicale": "Derniere consultation: vieux résumé\n\nHTA connue."}
+    captured = {}
+
+    def fake_update(tenant_id, phone, **kwargs):
+        captured.update(kwargs)
+        return profile
+
+    consultation = {
+        "date_consultation": "2026-07-07",
+        "motif": "Troubles du sommeil",
+        "impression_clinique": "Insomnie à explorer",
+    }
+    with patch("backend.routes.tenant.get_cabinet_client_by_phone", return_value=profile):
+        with patch("backend.routes.tenant.update_patient_fields", side_effect=fake_update):
+            _enrich_patient_context_from_consultation(1, "0600000000", consultation, {})
+
+    assert captured["dernier_contexte_consultation"].startswith("07/07/2026 | Motif: Troubles du sommeil")
+    assert captured["synthese_medicale"] == "HTA connue."
 
 
 def test_patient_consultation_state_first_consultation_flag():

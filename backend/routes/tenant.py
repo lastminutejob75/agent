@@ -5062,6 +5062,15 @@ def tenant_list_patient_consultations_route(
     return {"items": items, "total": len(items)}
 
 
+def _format_date_fr(value: Any) -> str:
+    """AAAA-MM-JJ -> JJ/MM/AAAA (affichage français) ; renvoie la valeur brute sinon."""
+    raw = str(value or "").strip()
+    try:
+        return datetime.strptime(raw[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        return raw
+
+
 def _patient_consultation_context_summary(consultation: Dict[str, Any], payload: Dict[str, Any]) -> str:
     date_label = str(consultation.get("date_consultation") or payload.get("date") or "").strip()
     motif = str(consultation.get("motif") or payload.get("motif") or "").strip()
@@ -5072,7 +5081,7 @@ def _patient_consultation_context_summary(consultation: Dict[str, Any], payload:
     prescription = str(consultation.get("prescription") or conduite.get("prescription") or "").strip()
     bits: List[str] = []
     if date_label:
-        bits.append(date_label[:10])
+        bits.append(_format_date_fr(date_label))
     if motif:
         bits.append(f"Motif: {motif[:180]}")
     if impression:
@@ -5084,17 +5093,19 @@ def _patient_consultation_context_summary(consultation: Dict[str, Any], payload:
     return " | ".join(bits)[:1200]
 
 
-def _merge_patient_medical_summary(current: str, latest_context: str) -> str:
-    current_clean = str(current or "").strip()
-    context_clean = str(latest_context or "").strip()
-    if not context_clean:
-        return current_clean[:6000]
-    marker = f"Derniere consultation: {context_clean}"
-    if marker in current_clean:
-        return current_clean[:6000]
-    if not current_clean:
-        return marker[:6000]
-    return f"{marker}\n\n{current_clean}"[:6000]
+_LEGACY_LAST_CONSULTATION_RE = re.compile(r"^derni[eè]re?\s+consultation\s*:", re.IGNORECASE)
+
+
+def _strip_legacy_consultation_markers(current: str) -> str:
+    """Retire de la synthèse médicale les blocs « Derniere consultation: … »
+    empilés par les versions précédentes.
+
+    La synthèse médicale doit rester stable et durable ; le résumé de la
+    dernière consultation vit uniquement dans `dernier_contexte_consultation`
+    (sinon les deux champs se dupliquent à chaque enregistrement)."""
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", str(current or "").strip())]
+    kept = [p for p in paragraphs if p and not _LEGACY_LAST_CONSULTATION_RE.match(p)]
+    return "\n\n".join(kept)[:6000]
 
 
 def _enrich_patient_context_from_consultation(
@@ -5105,8 +5116,11 @@ def _enrich_patient_context_from_consultation(
 ) -> None:
     """Best-effort : alimente le contexte patient général depuis une consultation.
 
-    - `dernier_contexte_consultation` <- contexte IA de la consultation (ou synthèse dérivée)
-    - `synthese_medicale` <- fusion incrémentale conservant l'historique stable
+    - `dernier_contexte_consultation` <- résumé de CETTE consultation uniquement
+      (remplacé à chaque enregistrement) ;
+    - `synthese_medicale` <- jamais empilée automatiquement : elle reste stable
+      (praticien/questionnaire). On se contente d'en retirer les anciens
+      marqueurs « Derniere consultation: … » hérités de l'ancien comportement.
 
     N'interrompt jamais la sauvegarde de la consultation en cas d'échec.
     """
@@ -5117,15 +5131,12 @@ def _enrich_patient_context_from_consultation(
         if not context:
             return
         profile_row = get_cabinet_client_by_phone(tenant_id, phone) or {}
-        merged = _merge_patient_medical_summary(
-            str(profile_row.get("synthese_medicale") or ""), context
-        )
-        update_patient_fields(
-            tenant_id,
-            phone,
-            dernier_contexte_consultation=context,
-            synthese_medicale=merged,
-        )
+        current_synthese = str(profile_row.get("synthese_medicale") or "").strip()
+        cleaned_synthese = _strip_legacy_consultation_markers(current_synthese)
+        fields: Dict[str, str] = {"dernier_contexte_consultation": context}
+        if cleaned_synthese != current_synthese:
+            fields["synthese_medicale"] = cleaned_synthese
+        update_patient_fields(tenant_id, phone, **fields)
     except Exception:
         logger.warning(
             "consultation context enrichment failed tenant=%s phone=%s",
@@ -5261,6 +5272,53 @@ _DICTEE_DOSSIER_FIELD_TO_PATIENT_COLUMN = {
 }
 
 
+def _dictee_block_column_contributions(block: Dict[str, Any]) -> List[tuple]:
+    """(colonne patient, texte) produits par un bloc dossier validé.
+
+    Le `structured` du LLM (nettoyé côté service) permet un routage fin :
+    - antecedents : medicaux / chirurgicaux vers leurs colonnes, familiaux vers
+      facteurs_risque (préfixés) — jamais mélangés dans un seul champ ;
+    - contexte : mode_de_vie vers facteurs_risque, points_attention vers
+      points_attention (uniquement les alertes utiles en consultation).
+    Sans structured, repli sur le texte du bloc vers la colonne principale.
+    """
+    field = str(block.get("field") or "").strip()
+    text = str(block.get("text") or "").strip()
+    structured = block.get("structured") if isinstance(block.get("structured"), dict) else {}
+
+    if field == "antecedents":
+        contributions = []
+        medicaux = str(structured.get("medicaux") or "").strip()
+        chirurgicaux = str(structured.get("chirurgicaux") or "").strip()
+        familiaux = str(structured.get("familiaux") or "").strip()
+        if medicaux:
+            contributions.append(("antecedents_medicaux", medicaux))
+        if chirurgicaux:
+            contributions.append(("antecedents_chirurgicaux", chirurgicaux))
+        if familiaux:
+            contributions.append(("facteurs_risque", f"ATCD familiaux : {familiaux}"))
+        if contributions:
+            return contributions
+        return [("antecedents_medicaux", text)] if text else []
+
+    if field == "contexte":
+        contributions = []
+        mode_de_vie = str(structured.get("mode_de_vie") or "").strip()
+        points_attention = str(structured.get("points_attention") or "").strip()
+        if mode_de_vie:
+            contributions.append(("facteurs_risque", mode_de_vie))
+        if points_attention:
+            contributions.append(("points_attention", points_attention))
+        if contributions:
+            return contributions
+        return [("facteurs_risque", text)] if text else []
+
+    column = _DICTEE_DOSSIER_FIELD_TO_PATIENT_COLUMN.get(field)
+    if column and text:
+        return [(column, text)]
+    return []
+
+
 def _is_non_renseigne_trace(value: Any) -> bool:
     """Trace « Non renseigné (interrogé le …) » : la question a été posée mais
     reste ouverte — ce n'est pas une donnée à préserver."""
@@ -5294,25 +5352,27 @@ def _apply_dictation_dossier_blocks(
         profile = get_cabinet_client_by_phone(tenant_id, phone) or {}
         consultation_date = str((consultation or {}).get("consultation_date") or "").strip() or date.today().isoformat()
         updates: Dict[str, str] = {}
+
+        def merge_into(column: str, text: str) -> None:
+            current = updates.get(column, str(profile.get(column) or "").strip())
+            if not current or _is_non_renseigne_trace(current):
+                updates[column] = text
+            elif text.lower() not in current.lower():
+                updates[column] = f"{current}\n{text}"
+
         for block in blocks:
             field = str(block.get("field") or "").strip()
             column = _DICTEE_DOSSIER_FIELD_TO_PATIENT_COLUMN.get(field)
-            if not column:
-                continue
             status = str(block.get("status") or "confirme").strip()
-            existing = str(profile.get(column) or "").strip()
-            existing_is_trace = _is_non_renseigne_trace(existing)
             if status == "non_renseigne":
-                if not existing or existing_is_trace:
+                if not column:
+                    continue
+                existing = str(profile.get(column) or "").strip()
+                if not existing or _is_non_renseigne_trace(existing):
                     updates[column] = f"Non renseigné (interrogé le {consultation_date})"
                 continue
-            text = str(block.get("text") or "").strip()
-            if not text:
-                continue
-            if not existing or existing_is_trace:
-                updates[column] = text
-            elif text.lower() not in existing.lower():
-                updates[column] = f"{existing}\n{text}"
+            for target_column, text in _dictee_block_column_contributions(block):
+                merge_into(target_column, text)
         if updates:
             update_patient_fields(tenant_id, phone, **updates)
     except Exception:

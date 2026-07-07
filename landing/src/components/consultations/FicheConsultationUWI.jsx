@@ -1718,7 +1718,7 @@ function PatientDossierCard({ patient, show, onToggle }) {
                 <ReadField key={f.key} label={f.label} value={patient[f.key]} tone={f.tone} />
               ))}
               {synthese && <ReadField label="Synthèse médicale" value={synthese} wide tone="teal" />}
-              {dernierContexte && <ReadField label="Dernier contexte de consultation" value={dernierContexte} wide />}
+              {dernierContexte && <ReadField label="Dernier contexte" value={dernierContexte} wide />}
             </div>
             {emptyLabels.length > 0 && (
               <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">

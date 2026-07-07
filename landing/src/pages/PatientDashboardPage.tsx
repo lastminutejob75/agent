@@ -918,7 +918,7 @@ function PatientProfileTextArea({
   value,
   onChange,
   placeholder,
-  rows = 3,
+  rows = 2,
   className = "",
 }: {
   label: string;
@@ -929,18 +929,57 @@ function PatientProfileTextArea({
   className?: string;
 }) {
   return (
-    <label className={cx("block rounded-2xl bg-white p-4", className)}>
-      <div className="mb-1 text-xs font-bold text-[#7D8CA5]">{label}</div>
+    <label className={cx("block rounded-2xl bg-white p-3", className)}>
+      <div className="mb-1 text-[11px] font-bold text-[#7D8CA5]">{label}</div>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={rows}
         maxLength={6000}
         placeholder={placeholder}
-        className="mt-1 w-full resize-y rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 text-sm font-semibold leading-6 text-[#0A1628] outline-none focus:border-[#009CA4] focus:ring-4 focus:ring-[#009CA4]/10"
+        className="mt-1 w-full resize-y rounded-xl border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[13px] font-semibold leading-5 text-[#0A1628] outline-none focus:border-[#009CA4] focus:ring-4 focus:ring-[#009CA4]/10"
       />
     </label>
   );
+}
+
+/** Texte long replié avec bascule « Voir plus / Voir moins ». */
+function ExpandableText({
+  text,
+  placeholder,
+  className,
+  threshold = 150,
+}: {
+  text: string;
+  placeholder: string;
+  className?: string;
+  threshold?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const value = text.trim();
+  const isLong = value.length > threshold;
+  const shown = !isLong || open ? value : `${value.slice(0, threshold).trimEnd()}…`;
+  return (
+    <div className={className}>
+      <p className="m-0 whitespace-pre-line text-[13px] font-semibold leading-5 text-[#0A1628]">
+        {shown || placeholder}
+      </p>
+      {isLong ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="mt-1 text-xs font-black text-[#009CA4] underline-offset-2 hover:underline"
+        >
+          {open ? "Voir moins" : "Voir plus"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** JJ/MM/AAAA en tête des contextes hérités au format ISO. */
+function frenchifyLeadingIsoDate(value: string) {
+  return value.replace(/^(\d{4})-(\d{2})-(\d{2})/, "$3/$2/$1");
 }
 
 function PatientMedicalContextPreview({
@@ -955,13 +994,23 @@ function PatientMedicalContextPreview({
   const treatment = read("traitements");
   const attention = read("points_attention");
   const risks = read("facteurs_risque");
-  const summary = read("synthese_medicale");
-  const last = read("dernier_contexte_consultation");
-  const hasContext = Boolean(allergy || treatment || attention || risks || summary || last);
+  const antecedents = [read("antecedents_medicaux"), read("antecedents_chirurgicaux")]
+    .filter(Boolean)
+    .join("\n");
+  // Les anciens enregistrements empilaient « Derniere consultation: … » dans la
+  // synthèse : on ne montre que la partie stable (le backend nettoie au prochain enregistrement).
+  const summary = read("synthese_medicale")
+    .split(/\n{2,}/)
+    .filter((p) => !/^derni[eè]re?\s+consultation\s*:/i.test(p.trim()))
+    .join("\n\n")
+    .trim();
+  const last = frenchifyLeadingIsoDate(read("dernier_contexte_consultation"));
+  const hasContext = Boolean(allergy || treatment || attention || risks || antecedents || summary || last);
   const rows = [
-    { label: "Allergies", value: allergy || "Non renseignées", tone: allergy ? "red" : "muted" },
-    { label: "Traitements", value: treatment || "Aucun traitement renseigné", tone: treatment ? "teal" : "muted" },
-    { label: "Points d'attention", value: attention || risks || "Aucun point d'attention renseigné", tone: attention || risks ? "amber" : "muted" },
+    { label: "Allergies", value: allergy, placeholder: "Non renseignées", tone: allergy ? "red" : "muted" },
+    { label: "Traitements", value: treatment, placeholder: "Aucun traitement renseigné", tone: treatment ? "teal" : "muted" },
+    { label: "Antécédents", value: antecedents, placeholder: "Aucun antécédent renseigné", tone: antecedents ? "muted" : "muted" },
+    { label: "Points d'attention", value: attention || risks, placeholder: "Aucun point d'attention renseigné", tone: attention || risks ? "amber" : "muted" },
   ];
   const toneClass = {
     red: "border-red-200 bg-red-50 text-red-950",
@@ -977,12 +1026,14 @@ function PatientMedicalContextPreview({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#009CA4]">Contexte médical</p>
-          <h2 className={cx("font-black tracking-[-0.02em] text-[#0A1628]", compact ? "text-xl" : "text-2xl")}>
+          <h2 className={cx("font-black tracking-[-0.02em] text-[#0A1628]", compact ? "text-lg" : "text-2xl")}>
             Ce qu'il faut savoir avant la consultation
           </h2>
-          <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-[#64748B]">
-            Résumé stable, alertes et derniers éléments récupérés depuis les fiches de consultation.
-          </p>
+          {!compact ? (
+            <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-[#64748B]">
+              Résumé stable, alertes et derniers éléments récupérés depuis les fiches de consultation.
+            </p>
+          ) : null}
         </div>
         <span className={cx(
           "rounded-full px-3 py-1.5 text-xs font-black",
@@ -991,26 +1042,30 @@ function PatientMedicalContextPreview({
           {hasContext ? "Contexte renseigné" : "À compléter"}
         </span>
       </div>
-      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+      <div className={cx("mt-3 grid grid-cols-1 gap-2.5", compact ? "sm:grid-cols-2" : "lg:grid-cols-4 sm:grid-cols-2")}>
         {rows.map((row) => (
-          <div key={row.label} className={cx("rounded-2xl border px-4 py-3", toneClass[row.tone as keyof typeof toneClass])}>
+          <div key={row.label} className={cx("rounded-2xl border px-3 py-2.5", toneClass[row.tone as keyof typeof toneClass])}>
             <div className="text-[10px] font-black uppercase tracking-[0.14em] opacity-70">{row.label}</div>
-            <div className="mt-1.5 text-sm font-black leading-6">{row.value}</div>
+            <ExpandableText text={row.value} placeholder={row.placeholder} className="mt-1" threshold={110} />
           </div>
         ))}
       </div>
-      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] px-4 py-3">
+      <div className="mt-2.5 grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+        <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] px-3 py-2.5">
           <div className="text-[10px] font-black uppercase tracking-[0.14em] text-[#64748B]">Synthèse médicale</div>
-          <p className="mt-2 text-sm font-semibold leading-7 text-[#0A1628]">
-            {summary || "Aucune synthèse médicale stable pour l'instant."}
-          </p>
+          <ExpandableText
+            text={summary}
+            placeholder="Aucune synthèse médicale stable pour l'instant."
+            className="mt-1.5"
+          />
         </div>
-        <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] px-4 py-3">
+        <div className="rounded-2xl border border-[#E2EAF4] bg-[#F8FBFD] px-3 py-2.5">
           <div className="text-[10px] font-black uppercase tracking-[0.14em] text-[#64748B]">Dernier contexte</div>
-          <p className="mt-2 text-sm font-semibold leading-7 text-[#0A1628]">
-            {last || "Aucune consultation enregistrée n'a encore enrichi ce contexte."}
-          </p>
+          <ExpandableText
+            text={last}
+            placeholder="Aucune consultation enregistrée n'a encore enrichi ce contexte."
+            className="mt-1.5"
+          />
         </div>
       </div>
     </section>
@@ -5365,64 +5420,64 @@ export default function PatientDashboardPage() {
               <div className="mb-5">
                 <PatientMedicalContextPreview patient={patientCabinetRow} compact />
               </div>
-              <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-                <label className="sm:col-span-2 rounded-2xl bg-[#F8FBFD] p-4">
-                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Nom affiché</div>
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <label className="sm:col-span-2 rounded-2xl bg-[#F8FBFD] p-3">
+                  <div className="mb-1 text-[11px] font-bold text-[#7D8CA5]">Nom affiché</div>
                   <input
                     value={profileNameDraft}
                     onChange={(e) => setProfileNameDraft(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
+                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[13px] font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
                   />
                 </label>
-                <div className="rounded-2xl bg-[#F8FBFD] p-4">
-                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Date de naissance</div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-3">
+                  <div className="mb-1 text-[11px] font-bold text-[#7D8CA5]">Date de naissance</div>
                   <input
                     type="date"
                     value={profileBirthDateDraft}
                     onChange={(e) => setProfileBirthDateDraft(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
+                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[13px] font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
                   />
                 </div>
-                <div className="rounded-2xl bg-[#F8FBFD] p-4">
-                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Médecin traitant</div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-3">
+                  <div className="mb-1 text-[11px] font-bold text-[#7D8CA5]">Médecin traitant</div>
                   <input
                     value={profilePhysicianDraft}
                     onChange={(e) => setProfilePhysicianDraft(e.target.value)}
                     placeholder="Dr Martin Dupont"
-                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
+                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[13px] font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
                   />
                 </div>
-                <div className="rounded-2xl bg-[#F8FBFD] p-4">
-                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Ville d&apos;exercice</div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-3">
+                  <div className="mb-1 text-[11px] font-bold text-[#7D8CA5]">Ville d&apos;exercice</div>
                   <input
                     value={profilePhysicianCityDraft}
                     onChange={(e) => setProfilePhysicianCityDraft(e.target.value)}
                     placeholder="Lyon, Paris…"
-                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-3 py-2 font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
+                    className="mt-1 w-full rounded-xl border border-[#DDE7F1] bg-white px-2.5 py-1.5 text-[13px] font-black text-[#0A1628] outline-none focus:border-[#009CA4]"
                   />
                 </div>
-                <div className="rounded-2xl bg-[#F8FBFD] p-4">
-                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Téléphone</div>
-                  <div className="font-black">{formatDisplayFrenchPhone(normalizePhone(urlPatientHero.phone))}</div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-3">
+                  <div className="mb-1 text-[11px] font-bold text-[#7D8CA5]">Téléphone</div>
+                  <div className="text-[13px] font-black">{formatDisplayFrenchPhone(normalizePhone(urlPatientHero.phone))}</div>
                 </div>
-                <div className="rounded-2xl bg-[#F8FBFD] p-4">
-                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Fiche créée</div>
-                  <div className="font-black">{formatCabinetMetaDate(patientCabinetRow?.created_at)}</div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-3">
+                  <div className="mb-1 text-[11px] font-bold text-[#7D8CA5]">Fiche créée</div>
+                  <div className="text-[13px] font-black">{formatCabinetMetaDate(patientCabinetRow?.created_at)}</div>
                 </div>
-                <div className="rounded-2xl bg-[#F8FBFD] p-4">
-                  <div className="mb-1 text-xs font-bold text-[#7D8CA5]">Dernière mise à jour</div>
-                  <div className="font-black">{formatCabinetMetaDate(patientCabinetRow?.updated_at)}</div>
+                <div className="rounded-2xl bg-[#F8FBFD] p-3">
+                  <div className="mb-1 text-[11px] font-bold text-[#7D8CA5]">Dernière mise à jour</div>
+                  <div className="text-[13px] font-black">{formatCabinetMetaDate(patientCabinetRow?.updated_at)}</div>
                 </div>
               </div>
-              <div className="mt-5 rounded-[22px] border border-[#DDE7F1] bg-[#F8FBFD] p-4">
-                <div className="mb-4">
+              <div className="mt-4 rounded-[22px] border border-[#DDE7F1] bg-[#F8FBFD] p-3">
+                <div className="mb-3">
                   <div className="text-sm font-black text-[#0A1628]">Contexte médical utile en consultation</div>
-                  <p className="mt-1 text-xs font-semibold leading-5 text-[#64748B]">
+                  <p className="mt-1 text-[11px] font-semibold leading-4 text-[#64748B]">
                     Ces informations alimentent le dossier patient affiché dans la fiche consultation.
-                    La dernière consultation enregistrée enrichit automatiquement ce contexte.
+                    Les éléments détectés en dictée sont proposés à la validation avant d&apos;être intégrés ici.
                   </p>
                 </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <PatientProfileTextArea
                     label="Antécédents médicaux"
                     value={profileMedicalAntecedentsDraft}
@@ -5463,17 +5518,17 @@ export default function PatientDashboardPage() {
                     label="Synthèse médicale"
                     value={profileMedicalSummaryDraft}
                     onChange={setProfileMedicalSummaryDraft}
-                    placeholder="Résumé stable du contexte patient."
+                    placeholder="Résumé stable et durable du contexte patient."
                     className="sm:col-span-2"
-                    rows={4}
+                    rows={3}
                   />
                   <PatientProfileTextArea
-                    label="Dernier contexte de consultation"
+                    label="Dernier contexte"
                     value={profileLastConsultationContextDraft}
                     onChange={setProfileLastConsultationContextDraft}
-                    placeholder="Mis à jour automatiquement après une fiche consultation."
+                    placeholder="Résumé de la dernière consultation — mis à jour automatiquement."
                     className="sm:col-span-2"
-                    rows={4}
+                    rows={3}
                   />
                 </div>
               </div>

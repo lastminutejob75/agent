@@ -230,11 +230,44 @@ describe("payload d'enregistrement", () => {
     expect(payload.examen_clinique.examen_physique).toBe("Abdomen souple.");
     expect(payload.impression_clinique).toBe("À caractériser.");
     expect(payload.conduite_a_tenir.suivi.consignes).toBe("Surveillance.");
-    expect(payload.examen_clinique.constantes).toEqual({ poids_kg: 68, taille_cm: 165, imc: 25 });
+    expect(payload.examen_clinique.constantes).toMatchObject({ poids_kg: 68, taille_cm: 165, imc: 25 });
     expect(payload.motif_source).toBe("uwi_suggestion");
     expect(payload.dictee.consent_patient).toBe(true);
     expect(payload.dictee.duration_seconds).toBe(154);
     expect(payload.dictee.decision_tags).toEqual(["Surveillance"]);
+  });
+
+  it("exploite le structured des blocs examen/decision et la note interne", () => {
+    const detailed = [
+      ...blocks.filter((b) => !["examen", "decision"].includes(b.field)),
+      block("examen", "day", {
+        text: "Abdomen souple. PA 128/76.",
+        structured: { pa_systolique: 128, pa_diastolique: 76, fc_bpm: 72 },
+      }),
+      block("decision", "day", {
+        text: "Surveillance, NFS demandée, revoir dans 15 jours.",
+        confirmed: true,
+        structured: {
+          prescription: "Paracétamol 1 g si douleur",
+          examens_demandes: ["NFS"],
+          orientation: "",
+          suivi_consignes: "Reconsulter si aggravation",
+          prochain_rdv: "2026-07-21",
+        },
+      }),
+      block("note", "day", { text: "Contexte familial tendu, à réévoquer." }),
+    ];
+    const payload = buildConsultationPayloadFromBlocks({ blocks: detailed, date: "2026-07-06" });
+    expect(payload.examen_clinique.constantes).toMatchObject({
+      pa_systolique: 128,
+      pa_diastolique: 76,
+      fc_bpm: 72,
+    });
+    expect(payload.conduite_a_tenir.prescription).toBe("Paracétamol 1 g si douleur");
+    expect(payload.conduite_a_tenir.examens_complementaires).toEqual(["NFS"]);
+    expect(payload.conduite_a_tenir.suivi.prochain_rdv).toBe("2026-07-21");
+    expect(payload.conduite_a_tenir.suivi.consignes).toBe("Reconsulter si aggravation");
+    expect(payload.note_praticien).toBe("Contexte familial tendu, à réévoquer.");
   });
 
   it("le transcript n'apparaît nulle part dans le payload", () => {

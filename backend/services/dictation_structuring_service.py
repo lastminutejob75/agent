@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 STRUCTURE_LLM_TIMEOUT_SECONDS = 15.0
 
 BlockField = Literal[
-    "motif", "elements", "examen", "impression", "decision",
+    "motif", "elements", "examen", "impression", "decision", "note",
     "allergies", "antecedents", "traitements", "mesures", "contexte",
 ]
 BlockDest = Literal["day", "dossier"]
@@ -46,6 +46,7 @@ FIELD_META: Dict[str, Dict[str, Any]] = {
     "examen": {"dest": "day", "label": "Examen", "critical": False, "danger": False},
     "impression": {"dest": "day", "label": "Impression", "critical": True, "danger": False},
     "decision": {"dest": "day", "label": "Conduite", "critical": True, "danger": False},
+    "note": {"dest": "day", "label": "Note interne", "critical": False, "danger": False},
     "allergies": {"dest": "dossier", "label": "Allergies", "critical": True, "danger": True},
     "antecedents": {"dest": "dossier", "label": "Antécédents", "critical": False, "danger": False},
     "traitements": {"dest": "dossier", "label": "Traitements", "critical": False, "danger": False},
@@ -53,7 +54,7 @@ FIELD_META: Dict[str, Dict[str, Any]] = {
     "contexte": {"dest": "dossier", "label": "Contexte", "critical": False, "danger": False},
 }
 
-DAY_FIELD_ORDER = ["motif", "elements", "examen", "impression", "decision"]
+DAY_FIELD_ORDER = ["motif", "elements", "examen", "impression", "decision", "note"]
 DOSSIER_FIELD_ORDER = ["mesures", "allergies", "traitements", "antecedents", "contexte"]
 
 STRUCTURE_SYSTEM_PROMPT = """Tu structures la dictée d'un médecin français en blocs JSON. Tu n'es PAS un assistant médical : tu ne diagnostiques pas, tu ne complètes pas, tu n'inventes rien.
@@ -61,19 +62,24 @@ STRUCTURE_SYSTEM_PROMPT = """Tu structures la dictée d'un médecin français en
 RÈGLES ABSOLUES :
 1. Chaque bloc ne contient QUE des informations explicitement présentes dans la dictée. Si le médecin n'a pas dicté d'impression, ne crée pas de bloc impression.
 2. Chaque bloc inclut "sourceSpans" : les extraits verbatim de la dictée qui justifient son contenu. Un bloc sans extrait justificatif est interdit.
-3. Reformulation autorisée : ponctuation, style télégraphique médical, unités normalisées ("1 mètre 65" → "165 cm", "128 sur 76" → "128/76 mmHg"). Ajout d'information interdit.
+3. Style : résume et structure en phrases courtes (style télégraphique médical). Ne recopie PAS les phrases dictées mot à mot : condense, supprime les hésitations et répétitions, normalise les unités ("1 mètre 65" → "165 cm", "128 sur 76" → "128/76 mmHg"). Ajout d'information interdit.
 4. Ne jamais transformer une observation en diagnostic. "Je retiens des douleurs épigastriques à caractériser" → impression telle quelle. Ne jamais écrire "gastrite probable" si le médecin ne l'a pas dit.
 5. Double destination :
-   - dest "day" (note du jour) : motif, elements (histoire/symptômes), examen (constat physique + constantes du jour dont la tension), impression, decision.
-   - dest "dossier" (durable) : allergies, antecedents (médicaux, chirurgicaux, familiaux), traitements (chroniques/en cours), mesures (poids, taille uniquement), contexte (mode de vie, tabac…).
+   - dest "day" (note du jour datée) : motif, elements (histoire de la maladie/symptômes), examen (constat physique + constantes du jour dont la tension), impression (hypothèses/impression clinique), decision (conduite à tenir, prescriptions, examens demandés, suivi prévu), note (note interne praticien — UNIQUEMENT si le médecin le dit explicitement : "note interne", "note pour moi", "à ne pas mettre dans le compte rendu").
+   - dest "dossier" (profil patient durable) : allergies, antecedents (médicaux, chirurgicaux, familiaux), traitements (chroniques/en cours), mesures (poids, taille uniquement), contexte (mode de vie, points d'attention).
    - La tension artérielle va dans "examen" (dest day), jamais dans mesures : c'est une mesure d'un instant.
    - Un traitement PRESCRIT aujourd'hui va dans "decision" (day). Un traitement que le patient PREND déjà va dans "traitements" (dossier).
 6. Si la dictée dit explicitement l'absence ("pas d'allergie connue", "aucun traitement") : créer le bloc avec ce contenu — c'est une information.
-7. Pour "mesures" : extraire poids_kg et taille_cm dans "structured". NE PAS calculer l'IMC (calcul serveur).
+7. Données machine "structured" (uniquement si explicitement dictées, jamais déduites) :
+   - "mesures" : {"poids_kg":68,"taille_cm":165}. NE PAS calculer l'IMC (calcul serveur).
+   - "examen" : constantes du jour {"pa_systolique":128,"pa_diastolique":76,"fc_bpm":72,"temperature_c":37.2,"spo2_pct":98,"fr_min":16} — seulement les valeurs dictées.
+   - "decision" : {"prescription":"...","examens_demandes":["..."],"orientation":"...","suivi_consignes":"...","prochain_rdv":"AAAA-MM-JJ"} — seulement ce qui est dicté.
+   - "antecedents" : {"medicaux":"...","chirurgicaux":"...","familiaux":"..."} — sépare STRICTEMENT les trois catégories, chacune en phrases courtes.
+   - "contexte" : {"mode_de_vie":"...","points_attention":"..."} — "mode_de_vie" = profession, tabac, alcool, activité physique, situation familiale ; "points_attention" = UNIQUEMENT les éléments utiles en consultation (risques, alertes, pathologies à surveiller, suivi important). Ne mélange JAMAIS les deux.
 8. Sortie : uniquement le JSON {"blocks":[...]}, sans texte autour.
 
 Schéma d'un bloc :
-{"field":"motif|elements|examen|impression|decision|allergies|antecedents|traitements|mesures|contexte","text":"...","sourceSpans":["extrait verbatim", "..."],"structured":{...}?}
+{"field":"motif|elements|examen|impression|decision|note|allergies|antecedents|traitements|mesures|contexte","text":"...","sourceSpans":["extrait verbatim", "..."],"structured":{...}?}
 """
 
 
@@ -162,6 +168,83 @@ def _clean_structured_mesures(structured: Any) -> Optional[Dict[str, Any]]:
     return out or None
 
 
+# Constantes du jour extraites dans le bloc examen : clé -> (min, max) plausibles.
+_EXAMEN_CONSTANTES_BOUNDS = {
+    "pa_systolique": (50, 300),
+    "pa_diastolique": (20, 200),
+    "fc_bpm": (20, 300),
+    "temperature_c": (30.0, 45.0),
+    "spo2_pct": (50, 100),
+    "fr_min": (4, 80),
+}
+
+
+def _clean_structured_examen(structured: Any) -> Optional[Dict[str, Any]]:
+    """Constantes du jour dictées : valeurs numériques bornées, rien d'autre."""
+    if not isinstance(structured, dict):
+        return None
+    out: Dict[str, Any] = {}
+    for key, (lo, hi) in _EXAMEN_CONSTANTES_BOUNDS.items():
+        raw = structured.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            value = float(str(raw).replace(",", "."))
+        except (TypeError, ValueError):
+            continue
+        if not (lo <= value <= hi):
+            continue
+        out[key] = value if key == "temperature_c" else int(round(value))
+    return out or None
+
+
+def _clean_structured_decision(structured: Any) -> Optional[Dict[str, Any]]:
+    """Conduite à tenir détaillée : prescription, examens demandés, orientation, suivi."""
+    if not isinstance(structured, dict):
+        return None
+    out: Dict[str, Any] = {}
+    for key, cap in (("prescription", 6000), ("orientation", 4000), ("suivi_consignes", 4000)):
+        value = str(structured.get(key) or "").strip()
+        if value:
+            out[key] = value[:cap]
+    examens = structured.get("examens_demandes")
+    if isinstance(examens, list):
+        cleaned = [str(e).strip()[:120] for e in examens if str(e).strip()]
+        if cleaned:
+            out["examens_demandes"] = cleaned[:12]
+    rdv = str(structured.get("prochain_rdv") or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", rdv):
+        out["prochain_rdv"] = rdv
+    return out or None
+
+
+def _clean_structured_text_fields(structured: Any, keys: tuple, cap: int = 2000) -> Optional[Dict[str, Any]]:
+    """Sous-champs texte d'un bloc (antecedents, contexte) : chaînes courtes uniquement."""
+    if not isinstance(structured, dict):
+        return None
+    out: Dict[str, Any] = {}
+    for key in keys:
+        value = str(structured.get(key) or "").strip()
+        if value:
+            out[key] = value[:cap]
+    return out or None
+
+
+def clean_block_structured(field: str, structured: Any) -> Optional[Dict[str, Any]]:
+    """Nettoyage déterministe du `structured` selon le champ (whitelist stricte)."""
+    if field == "mesures":
+        return _clean_structured_mesures(structured)
+    if field == "examen":
+        return _clean_structured_examen(structured)
+    if field == "decision":
+        return _clean_structured_decision(structured)
+    if field == "antecedents":
+        return _clean_structured_text_fields(structured, ("medicaux", "chirurgicaux", "familiaux"))
+    if field == "contexte":
+        return _clean_structured_text_fields(structured, ("mode_de_vie", "points_attention"))
+    return None
+
+
 def _make_block(
     field: str,
     text: str,
@@ -224,10 +307,9 @@ def sanitize_blocks(
             logger.warning("dictation block rejected (sourceSpans invalides) field=%s", field)
             continue
 
-        structured = None
+        structured = clean_block_structured(field, item.get("structured"))
         extra = None
         if field == "mesures":
-            structured = _clean_structured_mesures(item.get("structured"))
             imc = compute_imc((structured or {}).get("poids_kg"), (structured or {}).get("taille_cm"))
             if imc is not None:
                 structured = {**(structured or {}), "imc": imc}

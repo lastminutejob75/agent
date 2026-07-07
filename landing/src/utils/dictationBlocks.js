@@ -7,7 +7,7 @@
 
 import { hasContextFieldSignal, normalizeMedicalString } from "./medicalContext.js";
 
-export const DAY_FIELDS = ["motif", "elements", "examen", "impression", "decision"];
+export const DAY_FIELDS = ["motif", "elements", "examen", "impression", "decision", "note"];
 export const DOSSIER_FIELDS_ORDER = ["mesures", "allergies", "traitements", "antecedents", "contexte"];
 
 export const FIELD_LABELS = {
@@ -16,6 +16,7 @@ export const FIELD_LABELS = {
   examen: "Examen",
   impression: "Impression",
   decision: "Conduite",
+  note: "Note interne",
   allergies: "Allergies",
   antecedents: "Antécédents",
   traitements: "Traitements",
@@ -251,6 +252,10 @@ export function buildConsultationPayloadFromBlocks({
   const mesures = all.find((b) => b.dest === "dossier" && b.field === "mesures");
   const structured = mesures?.structured || {};
   const imc = computeImcFrontend(structured.poids_kg, structured.taille_cm);
+  // Constantes du jour dictées (tension, FC…) extraites du bloc examen.
+  const examenConstantes = all.find((b) => b.dest === "day" && b.field === "examen")?.structured || {};
+  // Conduite à tenir détaillée (prescription, examens demandés, suivi) extraite du bloc decision.
+  const decisionDetail = all.find((b) => b.dest === "day" && b.field === "decision")?.structured || {};
 
   const dossierBlocks = all
     .filter((b) => b.dest === "dossier")
@@ -275,6 +280,12 @@ export function buildConsultationPayloadFromBlocks({
       etat_general: "",
       examen_physique: findDayText(all, "examen"),
       constantes: {
+        fc_bpm: examenConstantes.fc_bpm ?? null,
+        pa_systolique: examenConstantes.pa_systolique ?? null,
+        pa_diastolique: examenConstantes.pa_diastolique ?? null,
+        temperature_c: examenConstantes.temperature_c ?? null,
+        spo2_pct: examenConstantes.spo2_pct ?? null,
+        fr_min: examenConstantes.fr_min ?? null,
         poids_kg: structured.poids_kg ?? null,
         taille_cm: structured.taille_cm ?? null,
         imc,
@@ -282,11 +293,17 @@ export function buildConsultationPayloadFromBlocks({
     },
     impression_clinique: findDayText(all, "impression"),
     conduite_a_tenir: {
-      examens_complementaires: [],
-      prescription: "",
-      orientation: "",
-      suivi: { prochain_rdv: null, consignes: findDayText(all, "decision") },
+      examens_complementaires: Array.isArray(decisionDetail.examens_demandes)
+        ? decisionDetail.examens_demandes
+        : [],
+      prescription: String(decisionDetail.prescription || "").trim(),
+      orientation: String(decisionDetail.orientation || "").trim(),
+      suivi: {
+        prochain_rdv: decisionDetail.prochain_rdv || null,
+        consignes: String(decisionDetail.suivi_consignes || "").trim() || findDayText(all, "decision"),
+      },
     },
+    note_praticien: findDayText(all, "note") || undefined,
     dictee: {
       consent_patient: true,
       degraded,
