@@ -19,8 +19,6 @@ function formatBirthDateDisplay(value: unknown) {
 
 type StatusBucket = "new" | "active" | "inactive";
 
-export type MobileViewType = "overview" | "appointments" | "history" | "documents";
-
 type DisplayHero = {
   name: string;
   phone: string;
@@ -98,20 +96,11 @@ function historyIcon(typeLabel: string) {
   return "◷";
 }
 
-const MOBILE_TABS: Array<{ id: MobileViewType; label: string; icon: string }> = [
-  { id: "overview", label: "Aperçu", icon: "⌂" },
-  { id: "appointments", label: "RDV", icon: "▣" },
-  { id: "history", label: "Historique", icon: "◷" },
-  { id: "documents", label: "Documents", icon: "▤" },
-];
-
 export type PatientDashboardMobileProps = {
   displayHero: DisplayHero;
   patientCabinetRow: Record<string, unknown> | null;
   patientEmail: string;
   tenantPatientNotFound: boolean;
-  activeView: MobileViewType;
-  setActiveView: (view: MobileViewType) => void;
   onBackToList: () => void;
   onOpenProfile: () => void;
   onCall: () => void;
@@ -593,36 +582,6 @@ function MobileConsultationsDossier({
   );
 }
 
-function MobileTabs({
-  active,
-  onChange,
-}: {
-  active: MobileViewType;
-  onChange: (view: MobileViewType) => void;
-}) {
-  return (
-    <nav className="sticky top-0 z-10 mb-3 grid grid-cols-4 gap-1.5 rounded-[22px] border border-[#E3EAF2] bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.06)]">
-      {MOBILE_TABS.map((tab) => {
-        const isActive = active === tab.id;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => onChange(tab.id)}
-            className={cx(
-              "flex flex-col items-center gap-1 rounded-2xl px-1 py-2.5 text-[13px] font-black transition",
-              isActive ? "bg-[#EAF8FA] text-[#007F88] shadow-[inset_0_-3px_0_#009CA4]" : "text-[#536175]",
-            )}
-          >
-            <span className="text-[17px] leading-none">{tab.icon}</span>
-            {tab.label}
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
 function MobileNextAppointment({
   upcoming,
   loading,
@@ -972,7 +931,10 @@ function MobileDocumentsTab({
   formatDocDate: (value: string) => string;
 }) {
   return (
-    <section className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.07)]">
+    <section
+      id="patient-documents"
+      className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.07)]"
+    >
       <h2 className="mb-3 text-[21px] font-black">Documents</h2>
       <button
         type="button"
@@ -1080,8 +1042,6 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     patientCabinetRow,
     patientEmail,
     tenantPatientNotFound,
-    activeView,
-    setActiveView,
     onBackToList,
     onOpenProfile,
     onCall,
@@ -1175,100 +1135,79 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         documentsCount={documents.length}
         documentsLoading={documentsLoading}
       />
-      <MobileTabs active={activeView} onChange={setActiveView} />
-
-      {activeView === "overview" ? (
-        <>
-          <MobileNextAppointment
-            upcoming={upcomingAppointments}
-            loading={patientAgendaLoading}
-            apptStatusLabel={apptStatusLabel}
-            renderApptActions={renderApptActions}
-          />
-          <MobileConsultationsDossier
-            consultations={patientConsultations}
-            loading={patientConsultationsLoading}
-            saving={consultationSaving}
-            deletingId={consultationDeletingId}
-            lastSavedId={lastSavedConsultationId}
-            onCreate={onCreateConsultation}
-            onDuplicate={onDuplicateLatestConsultation}
-            onEdit={onEditConsultation}
-            onDownloadPdf={onDownloadConsultationPdf}
-            onDelete={onDeleteConsultation}
-          />
-          <MobileContextPatient
-            phone={tenantPatientPhone}
-            patient={patientCabinetRow}
-            summaryRefreshNonce={summaryRefreshNonce}
-            notes={patientNotes}
-            notesLoading={notesLoading}
-            noteDeletingId={noteDeletingId}
-            noteUpdatingId={noteUpdatingId}
-            noteEditingId={noteEditingId}
-            noteEditDraft={noteEditDraft}
-            noteExpandedIds={noteExpandedIds}
-            onRemoveNote={onRemoveNote}
-            onStartEditNote={onStartEditNote}
-            onCancelEditNote={onCancelEditNote}
-            onChangeNoteEditDraft={onChangeNoteEditDraft}
-            onSaveNoteEdit={onSaveNoteEdit}
-            onToggleNoteExpanded={onToggleNoteExpanded}
-          />
-          <PatientQuestionnaireCard
-            phone={tenantPatientPhone}
-            patientEmail={patientEmail}
-            profile={patientCabinetRow}
-            notify={notify}
-            onApplied={onQuestionnaireApplied}
-            disabled={tenantPatientNotFound}
-          />
-          <div className="mt-3">
-            <PatientAdminQuestionnaireCard
-              phone={tenantPatientPhone}
-              patientEmail={patientEmail}
-              notify={notify}
-              summaryRefreshNonce={summaryRefreshNonce}
-              onApplied={onQuestionnaireApplied}
-              disabled={tenantPatientNotFound}
-            />
-          </div>
-          <div className="mt-3">
-            <PatientMedicalQuestionnaireCard
-              phone={tenantPatientPhone}
-              patientEmail={patientEmail}
-              notify={notify}
-              summaryRefreshNonce={summaryRefreshNonce}
-              onApplied={onQuestionnaireApplied}
-              disabled={tenantPatientNotFound}
-            />
-          </div>
-        </>
-      ) : null}
-
-      {activeView === "appointments" ? (
-        <MobileAppointmentsTab
-          upcoming={upcomingAppointments}
-          past={pastAppointments}
-          loading={patientAgendaLoading}
-          apptStatusLabel={apptStatusLabel}
-          renderApptActions={renderApptActions}
+      <MobileAppointmentsTab
+        upcoming={upcomingAppointments}
+        past={pastAppointments}
+        loading={patientAgendaLoading}
+        apptStatusLabel={apptStatusLabel}
+        renderApptActions={renderApptActions}
+      />
+      <MobileConsultationsDossier
+        consultations={patientConsultations}
+        loading={patientConsultationsLoading}
+        saving={consultationSaving}
+        deletingId={consultationDeletingId}
+        lastSavedId={lastSavedConsultationId}
+        onCreate={onCreateConsultation}
+        onDuplicate={onDuplicateLatestConsultation}
+        onEdit={onEditConsultation}
+        onDownloadPdf={onDownloadConsultationPdf}
+        onDelete={onDeleteConsultation}
+      />
+      <MobileContextPatient
+        phone={tenantPatientPhone}
+        patient={patientCabinetRow}
+        summaryRefreshNonce={summaryRefreshNonce}
+        notes={patientNotes}
+        notesLoading={notesLoading}
+        noteDeletingId={noteDeletingId}
+        noteUpdatingId={noteUpdatingId}
+        noteEditingId={noteEditingId}
+        noteEditDraft={noteEditDraft}
+        noteExpandedIds={noteExpandedIds}
+        onRemoveNote={onRemoveNote}
+        onStartEditNote={onStartEditNote}
+        onCancelEditNote={onCancelEditNote}
+        onChangeNoteEditDraft={onChangeNoteEditDraft}
+        onSaveNoteEdit={onSaveNoteEdit}
+        onToggleNoteExpanded={onToggleNoteExpanded}
+      />
+      <PatientQuestionnaireCard
+        phone={tenantPatientPhone}
+        patientEmail={patientEmail}
+        profile={patientCabinetRow}
+        notify={notify}
+        onApplied={onQuestionnaireApplied}
+        disabled={tenantPatientNotFound}
+      />
+      <div className="mt-3">
+        <PatientAdminQuestionnaireCard
+          phone={tenantPatientPhone}
+          patientEmail={patientEmail}
+          notify={notify}
+          summaryRefreshNonce={summaryRefreshNonce}
+          onApplied={onQuestionnaireApplied}
+          disabled={tenantPatientNotFound}
         />
-      ) : null}
-
-      {activeView === "history" ? (
-        <MobileHistoryTab items={patientHistory} loading={patientHistoryLoading} />
-      ) : null}
-
-      {activeView === "documents" ? (
-        <MobileDocumentsTab
-          documents={documents}
-          loading={documentsLoading}
-          onAddDocument={onAddDocument}
-          onPreviewDocument={onPreviewDocument}
-          formatDocDate={formatDocDate}
+      </div>
+      <div className="mt-3">
+        <PatientMedicalQuestionnaireCard
+          phone={tenantPatientPhone}
+          patientEmail={patientEmail}
+          notify={notify}
+          summaryRefreshNonce={summaryRefreshNonce}
+          onApplied={onQuestionnaireApplied}
+          disabled={tenantPatientNotFound}
         />
-      ) : null}
+      </div>
+      <MobileHistoryTab items={patientHistory} loading={patientHistoryLoading} />
+      <MobileDocumentsTab
+        documents={documents}
+        loading={documentsLoading}
+        onAddDocument={onAddDocument}
+        onPreviewDocument={onPreviewDocument}
+        formatDocDate={formatDocDate}
+      />
     </div>
   );
 }

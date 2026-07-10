@@ -283,13 +283,17 @@ export function createShellCss(colors) {
       right: 0;
       bottom: 0;
       z-index: 60;
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 2px;
+      display: flex;
+      align-items: stretch;
+      gap: 1px;
       border-top: 1px solid ${colors.border};
       background: rgba(255,255,255,.96);
-      padding: 6px 6px max(6px, env(safe-area-inset-bottom, 0px));
+      padding: 4px 2px max(4px, env(safe-area-inset-bottom, 0px));
       backdrop-filter: blur(8px);
+    }
+    .uwi-mobile-nav > a {
+      flex: 1 1 0;
+      min-width: 0;
     }
   }
   @media (max-width: 760px) {

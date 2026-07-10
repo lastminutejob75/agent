@@ -169,7 +169,6 @@ type PatientBookingConfirm = {
   bookingTime: string;
   motif: string;
 };
-type ViewType = "overview" | "appointments" | "history" | "documents";
 type MessageChannel = "sms" | "email";
 type RequestContext = {
   id: string;
@@ -454,13 +453,12 @@ function isPatientDetailCacheValid(
       }
     | undefined,
   patientFetchNonce: number,
-  activeView: ViewType,
 ) {
   return Boolean(
     cached
       && cached.nonce === patientFetchNonce
       && Date.now() - cached.ts < PATIENT_DETAIL_CACHE_MS
-      && (activeView !== "overview" || cached.hasNotes),
+      && cached.hasNotes,
   );
 }
 
@@ -504,8 +502,8 @@ function isMobilePatientDashboardViewport() {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches;
 }
 
-function shouldLoadPatientOverviewData(activeView: ViewType) {
-  return activeView === "overview" || activeView === "documents" || !isMobilePatientDashboardViewport();
+function scrollToPatientDocumentsSection() {
+  document.getElementById("patient-documents")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function readRequestStatusOverrides() {
@@ -1272,7 +1270,6 @@ export default function PatientDashboardPage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("Tous");
-  const [activeView, setActiveView] = useState<ViewType>("overview");
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState<ModalType>(null);
   const [note, setNote] = useState("");
@@ -2073,7 +2070,7 @@ export default function PatientDashboardPage() {
     }
 
     const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
-    const cacheValid = isPatientDetailCacheValid(cached, patientFetchNonce, activeView);
+    const cacheValid = isPatientDetailCacheValid(cached, patientFetchNonce);
 
     if (cacheValid && cached) {
       applyPatientDetailBundle(cached);
@@ -2090,16 +2087,14 @@ export default function PatientDashboardPage() {
     syncPatientEmailDraft("");
     setPatientHistory([]);
     setDocumentsLoading(false);
-    setNotesLoading(shouldLoadPatientOverviewData(activeView));
+    setNotesLoading(true);
     setNoteDeletingId(null);
     setNoteUpdatingId(null);
     setNoteEditingId(null);
     setNoteEditDraft("");
     setNoteExpandedIds({});
 
-    const notesPromise = shouldLoadPatientOverviewData(activeView)
-      ? api.tenantGetPatientNotes(tenantPatientPhone, "?limit=40").catch(() => ({ items: [] }))
-      : Promise.resolve({ items: [] as unknown[] });
+    const notesPromise = api.tenantGetPatientNotes(tenantPatientPhone, "?limit=40").catch(() => ({ items: [] }));
 
     api.tenantGetPatient(tenantPatientPhone, { lightweight: true, includeDocuments: false })
       .then(async (res) => {
@@ -2113,9 +2108,7 @@ export default function PatientDashboardPage() {
           urlPatientHero: buildPatientHeroFromProfile(p, tenantPatientPhone),
           patientEmail: String(p?.email || ""),
           documents: cached?.documents?.length ? cached.documents : [],
-          patientNotes: shouldLoadPatientOverviewData(activeView)
-            ? mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : [])
-            : (cached?.patientNotes || []),
+          patientNotes: mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : []),
           patientInsightTags: normalizePatientInsightTags(res?.insights?.tags),
           patientPastAppointments: mapPatientPastAppointments(res?.insights?.recent_past_appointments),
         };
@@ -2125,7 +2118,7 @@ export default function PatientDashboardPage() {
           ...bundle,
           nonce: patientFetchNonce,
           ts: Date.now(),
-          hasNotes: shouldLoadPatientOverviewData(activeView),
+          hasNotes: true,
         });
       })
       .catch(async (e: unknown) => {
@@ -2136,9 +2129,7 @@ export default function PatientDashboardPage() {
         if (cancelled) return;
         const bundle = emptyPatientDetailBundle({
           tenantPatientNotFound: status === 404,
-          patientNotes: shouldLoadPatientOverviewData(activeView)
-            ? mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : [])
-            : [],
+          patientNotes: mapPatientNotes(Array.isArray(notesRes?.items) ? notesRes.items : []),
         });
         applyPatientDetailBundle(bundle);
         syncPatientEmailDraft("");
@@ -2147,7 +2138,7 @@ export default function PatientDashboardPage() {
           ...bundle,
           nonce: patientFetchNonce,
           ts: Date.now(),
-          hasNotes: shouldLoadPatientOverviewData(activeView),
+          hasNotes: true,
         });
       })
       .finally(() => {
@@ -2163,7 +2154,6 @@ export default function PatientDashboardPage() {
   }, [
     tenantPatientPhone,
     patientFetchNonce,
-    activeView,
     applyPatientDetailBundle,
     syncPatientEmailDraft,
     location.pathname,
@@ -2178,11 +2168,8 @@ export default function PatientDashboardPage() {
       setDocumentsLoading(false);
       return undefined;
     }
-    const needDocs = shouldLoadPatientOverviewData(activeView);
-    if (!needDocs) return undefined;
-
     const cached = patientDetailCacheRef.current.get(tenantPatientPhone);
-    if (cached?.documents?.length && isPatientDetailCacheValid(cached, patientFetchNonce, activeView)) {
+    if (cached?.documents?.length && isPatientDetailCacheValid(cached, patientFetchNonce)) {
       setDocuments(cached.documents);
       setDocumentsLoading(false);
       return undefined;
@@ -2190,7 +2177,6 @@ export default function PatientDashboardPage() {
 
     let cancelled = false;
     setDocumentsLoading(true);
-    const deferMs = activeView === "documents" ? 0 : 700;
     const tid = window.setTimeout(() => {
       api.tenantGetPatientDocuments(tenantPatientPhone)
         .then((res) => {
@@ -2208,12 +2194,12 @@ export default function PatientDashboardPage() {
         .finally(() => {
           if (!cancelled) setDocumentsLoading(false);
         });
-    }, deferMs);
+    }, 0);
     return () => {
       cancelled = true;
       window.clearTimeout(tid);
     };
-  }, [tenantPatientPhone, activeView, patientFetchNonce]);
+  }, [tenantPatientPhone, patientFetchNonce]);
 
   useEffect(() => {
     if (!tenantPatientPhone) return;
@@ -2312,13 +2298,7 @@ export default function PatientDashboardPage() {
         cancelled = true;
       };
     }
-    if (activeView === "history") {
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const daysNeeded = activeView === "appointments" ? 60 : 14;
+    const daysNeeded = isMobilePatientDashboardViewport() ? 60 : 14;
     if (agendaDaysLoaded >= daysNeeded) {
       return () => {
         cancelled = true;
@@ -2366,11 +2346,11 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeView, agendaDaysLoaded, agendaRefreshNonce, tenantPatientPhone]);
+  }, [agendaDaysLoaded, agendaRefreshNonce, tenantPatientPhone]);
 
   useEffect(() => {
     let cancelled = false;
-    const shouldLoad = !!tenantPatientPhone && (activeView === "history" || modal === "history");
+    const shouldLoad = !!tenantPatientPhone && (isMobilePatientDashboardViewport() || modal === "history");
     if (!shouldLoad) {
       return () => {
         cancelled = true;
@@ -2392,7 +2372,7 @@ export default function PatientDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantPatientPhone, activeView, modal, patientFetchNonce]);
+  }, [tenantPatientPhone, modal, patientFetchNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3708,7 +3688,7 @@ export default function PatientDashboardPage() {
       setPatientFetchNonce((n) => n + 1);
       setModal(null);
       if (isMobilePatientDashboardViewport()) {
-        setActiveView("documents");
+        scrollToPatientDocumentsSection();
       }
       notify("Document ajouté");
     } catch (e) {
@@ -4297,7 +4277,7 @@ export default function PatientDashboardPage() {
                     type="button"
                     onClick={() => {
                       const cached = patientDetailCacheRef.current.get(patient.phone);
-                      const cacheValid = isPatientDetailCacheValid(cached, patientFetchNonce, activeView);
+                      const cacheValid = isPatientDetailCacheValid(cached, patientFetchNonce);
                       if (cacheValid && cached) {
                         applyPatientDetailBundle(cached);
                         syncPatientEmailDraft(cached.patientEmail || "");
@@ -4313,7 +4293,7 @@ export default function PatientDashboardPage() {
                         }));
                         syncPatientEmailDraft("");
                         setDocumentsLoading(true);
-                        setNotesLoading(shouldLoadPatientOverviewData(activeView));
+                        setNotesLoading(true);
                       }
                       const np = new URLSearchParams(searchParams);
                       np.set("phone", patient.phone);
@@ -4415,8 +4395,6 @@ export default function PatientDashboardPage() {
               patientCabinetRow={patientCabinetRow}
               patientEmail={patientEmail}
               tenantPatientNotFound={tenantPatientNotFound}
-              activeView={activeView}
-              setActiveView={setActiveView}
               onBackToList={goBackToPatientList}
               onOpenProfile={() => setModal("profile")}
               onCall={() => {
@@ -4438,7 +4416,7 @@ export default function PatientDashboardPage() {
               canSendProfessionalEmail={Boolean(patientEmail && !tenantPatientNotFound)}
               onAddNote={() => setModal("addNote")}
               onAddDocument={() => setModal("addDocument")}
-              onViewDocuments={() => setActiveView("documents")}
+              onViewDocuments={scrollToPatientDocumentsSection}
               onOpenHistoryModal={() => setModal("history")}
               onCreateBooking={() => setCreatePatientBookingOpen(true)}
               createBookingDisabled={!tenantPatientPhone}
@@ -5656,7 +5634,7 @@ export default function PatientDashboardPage() {
               onClick={() => {
                 setModal(null);
                 if (isMobilePatientDashboardViewport()) {
-                  setActiveView("documents");
+                  scrollToPatientDocumentsSection();
                 }
               }}
               className="font-black text-[#008EA1] underline"

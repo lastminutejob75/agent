@@ -43,17 +43,29 @@ export default function AppMobileBottomNav({ navItems, demandBadge, colors }) {
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: 3,
+                gap: 2,
                 borderRadius: 10,
-                padding: "6px 4px",
+                padding: "5px 1px",
                 color: isActive ? colors.teal : "#64748B",
                 background: isActive ? colors.tealSoft : "transparent",
-                fontSize: 10,
+                fontSize: 9,
                 fontWeight: 700,
+                lineHeight: 1.1,
+                minWidth: 0,
+                width: "100%",
               }}
             >
-              <span style={{ fontSize: 14 }}>{item.icon}</span>
-              <span>{item.label}</span>
+              <span style={{ fontSize: 14, lineHeight: 1 }}>{item.icon}</span>
+              <span
+                style={{
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {item.label}
+              </span>
               {item.to === "/app/demandes" && demandBadge > 0 ? (
                 <span
                   style={{

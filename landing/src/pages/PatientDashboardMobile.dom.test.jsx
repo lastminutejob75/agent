@@ -19,8 +19,6 @@ const baseProps = {
   },
   patientEmail: "jean@example.com",
   tenantPatientNotFound: false,
-  activeView: "overview",
-  setActiveView: vi.fn(),
   onBackToList: vi.fn(),
   onOpenProfile: vi.fn(),
   onCall: vi.fn(),
@@ -28,6 +26,7 @@ const baseProps = {
   onCreateConsultation: vi.fn(),
   onAddNote: vi.fn(),
   onAddDocument: vi.fn(),
+  onViewDocuments: vi.fn(),
   onOpenHistoryModal: vi.fn(),
   tenantPatientPhone: "",
   notify: vi.fn(),
@@ -69,20 +68,20 @@ const baseProps = {
 };
 
 describe("PatientDashboardMobile", () => {
-  it("renders patient header and tabs", () => {
+  it("renders patient header and single-scroll sections", () => {
     render(<PatientDashboardMobile {...baseProps} />);
     expect(screen.getByLabelText("Retour à la liste patients")).toBeTruthy();
     expect(screen.getByText("Jean Dupont")).toBeTruthy();
     expect(screen.getByText("Prochain rendez-vous")).toBeTruthy();
     expect(screen.getByText("Documents")).toBeTruthy();
+    expect(screen.queryByText("Aperçu")).toBeNull();
   });
 
-  it("renders appointments tab with past dates", () => {
+  it("renders appointments list with past dates in the same scroll", () => {
     const past = [{ start: new Date("2024-01-15T10:00:00"), key: "past-1" }];
     render(
       <PatientDashboardMobile
         {...baseProps}
-        activeView="appointments"
         pastAppointments={past}
         upcomingAppointments={[
           {
