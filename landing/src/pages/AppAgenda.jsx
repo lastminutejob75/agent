@@ -18,6 +18,14 @@ import {
 } from "../lib/patientDuplicateCheck.js";
 import { bookingOriginLabel } from "../lib/agendaPatientMeta.js";
 import {
+  AGENDA_SEMANTIC_LEGEND,
+  countAgendaTones,
+  isAgendaSlotCancelled,
+  isClaraManagedSlot,
+  semanticLabelForAgendaTone,
+  toneForAgendaSlot,
+} from "../lib/agendaAppointmentSemantics.js";
+import {
   agendaCancelPayload,
   agendaReschedulePayload,
   appointmentGoogleEventId,
@@ -224,35 +232,6 @@ function typeIcon(type) {
   if (v.includes("suivi")) return "🔄";
   if (v.includes("prem")) return "👋";
   return "🩺";
-}
-
-function toneForAppointment(appt) {
-  const text = `${appt?.patient || ""} ${appt?.type || ""}`.toLowerCase();
-  if (text.includes("urgent") || text.includes("prioritaire") || text.includes("douleur")) return "red";
-  if (text.includes("document demand") || text.includes("pièce demand") || text.includes("piece demand")) return "blue";
-  if (text.includes("ordonnance") || text.includes("renouvellement")) return "indigo";
-  if (text.includes("récup") || text.includes("recup") || text.includes("repris") || text.includes("sauvé") || text.includes("sauve")) return "purple";
-  if (text.includes("libéré") || text.includes("libere") || text.includes("réattrib") || text.includes("reattrib") || text.includes("confirmer")) return "orange";
-  if (text.includes("pause") || text.includes("indisponible") || text.includes("ouvert") || text.includes("disponible")) return "gray";
-  if (appt?.isUWI) return "green";
-  return "teal";
-}
-
-function semanticLabelForAppointment(appt) {
-  const tone = toneForAppointment(appt);
-  if (tone === "red") return "Urgence";
-  if (tone === "blue") return "Documents";
-  if (tone === "indigo") return "Ordonnance";
-  if (tone === "orange") return "À confirmer";
-  if (tone === "purple") return "Récupéré";
-  if (tone === "green") return "Confirmé";
-  if (tone === "gray") return "Indispo";
-  return "Consultation";
-}
-
-function isAgendaCancelledSlot(slot) {
-  const text = `${slot?.status || ""} ${slot?.booking_status || ""}`.toLowerCase();
-  return text.includes("cancel") || text.includes("annul");
 }
 
 const APPT_TONE = {
@@ -710,7 +689,8 @@ function AgendaWeekMobileList({
             ) : (
               <div style={S.weekMobileApptList}>
                 {dayAppts.map((a) => {
-                  const tone = APPT_TONE[toneForAppointment(a)] || APPT_TONE.teal;
+                  const toneKey = a.tone || toneForAgendaSlot(a);
+                  const tone = APPT_TONE[toneKey] || APPT_TONE.teal;
                   const isOpen = selectedAppt?.id === a.id;
                   return (
                     <button
@@ -727,7 +707,7 @@ function AgendaWeekMobileList({
                     >
                       <div style={S.weekMobileApptTop}>
                         <span style={{ ...S.weekMobileApptTime, color: tone.time }}>{a.displayTime}</span>
-                        <span style={{ ...S.weekMobileApptTag, color: tone.time }}>{semanticLabelForAppointment(a)}</span>
+                        <span style={{ ...S.weekMobileApptTag, color: tone.time }}>{semanticLabelForAgendaTone(toneKey)}</span>
                       </div>
                       <div style={{ ...S.weekMobileApptName, color: tone.text }}>{a.patient || "Patient"}</div>
                       <div style={S.weekMobileApptType}>{a.typeIcon} {a.type || "Consultation"}</div>
@@ -785,7 +765,7 @@ function AgendaMonthMobileView({
           const isSelected = d === selectedDate;
           const dayNum = new Date(`${d}T12:00:00`).getDate();
           const dayAppts = appointmentsByDate[d] || [];
-          const toneDots = dayAppts.slice(0, 3).map((a) => a.tone || toneForAppointment(a));
+          const toneDots = dayAppts.slice(0, 3).map((a) => a.tone || toneForAgendaSlot(a));
           return (
             <button
               key={d}
@@ -830,7 +810,7 @@ function AgendaMonthMobileView({
         ) : (
           <div style={S.weekMobileApptList}>
             {selectedDayAppts.map((a) => {
-              const tone = APPT_TONE[toneForAppointment(a)] || APPT_TONE.teal;
+              const tone = APPT_TONE[toneForAgendaSlot(a)] || APPT_TONE.teal;
               const isOpen = selectedAppt?.id === a.id;
               return (
                 <button
@@ -847,7 +827,7 @@ function AgendaMonthMobileView({
                 >
                   <div style={S.weekMobileApptTop}>
                     <span style={{ ...S.weekMobileApptTime, color: tone.time }}>{a.displayTime}</span>
-                    <span style={{ ...S.weekMobileApptTag, color: tone.time }}>{semanticLabelForAppointment(a)}</span>
+                    <span style={{ ...S.weekMobileApptTag, color: tone.time }}>{semanticLabelForAgendaTone(a.tone || toneForAgendaSlot(a))}</span>
                   </div>
                   <div style={{ ...S.weekMobileApptName, color: tone.text }}>{a.patient || "Patient"}</div>
                   <div style={S.weekMobileApptType}>{a.typeIcon} {a.type || "Consultation"}</div>
@@ -1506,7 +1486,7 @@ export default function AppAgenda() {
   const appointments = useMemo(
     () => visibleDates.flatMap((date) =>
       (agendaByDate[date]?.slots || [])
-        .filter((s) => !isAgendaCancelledSlot(s))
+        .filter((s) => !isAgendaSlotCancelled(s))
         .map((s, i) => {
           const appt = {
             ...s,
@@ -1522,7 +1502,7 @@ export default function AppAgenda() {
               ? (s.public_booking_id || s.event_id || "")
               : (s.appointment_id || s.event_id || ""),
           };
-          return { ...appt, tone: toneForAppointment(appt) };
+          return { ...appt, tone: toneForAgendaSlot(appt) };
         })),
     [agendaByDate, visibleDates, duration],
   );
@@ -2157,23 +2137,20 @@ export default function AppAgenda() {
     week: `${appointments.length} RDV cette semaine`,
     month: `${appointments.length} RDV ce mois`,
   };
-  const semanticCounts = useMemo(() => {
-    const base = { green: 0, orange: 0, purple: 0, red: 0, blue: 0, indigo: 0, gray: 0, teal: 0 };
-    appointments.forEach((a) => {
-      const tone = toneForAppointment(a);
-      base[tone] = (base[tone] || 0) + 1;
-    });
-    return base;
-  }, [appointments]);
+  const semanticCounts = useMemo(() => countAgendaTones(appointments), [appointments]);
+  const claraManagedCount = useMemo(
+    () => appointments.filter(isClaraManagedSlot).length,
+    [appointments],
+  );
   const kpiCards = [
-    { tone: "teal", value: appointments.length, label: viewMode === "month" ? "rendez-vous" : "rendez-vous" },
+    { tone: "teal", value: appointments.length, label: "rendez-vous" },
     { tone: "orange", value: semanticCounts.orange, label: "à confirmer" },
     { tone: "purple", value: semanticCounts.purple, label: "créneaux récupérés" },
-    { tone: "green", value: Math.max(semanticCounts.green, uwiCount), label: "rappels envoyés" },
+    { tone: "green", value: claraManagedCount, label: "via Clara" },
   ];
   const weekActionItems = useMemo(() => {
     const weekAppts = appointments.filter((a) => weekDates.includes(a.date));
-    const firstByTone = (tone) => weekAppts.find((a) => toneForAppointment(a) === tone);
+    const firstByTone = (tone) => weekAppts.find((a) => (a.tone || toneForAgendaSlot(a)) === tone);
     const urgent = firstByTone("red");
     const pending = firstByTone("orange");
     const recovered = firstByTone("purple");
@@ -2195,11 +2172,11 @@ export default function AppAgenda() {
       },
       {
         tone: "green",
-        title: "Confirmations",
-        subtitle: `${semanticCounts.green} patients confirmés`,
+        title: "Pris par Clara",
+        subtitle: `${claraManagedCount} rendez-vous gérés par l'assistant`,
       },
     ];
-  }, [appointments, weekDates, semanticCounts.purple, semanticCounts.green]);
+  }, [appointments, weekDates, semanticCounts.purple, claraManagedCount]);
   const weekLoadRows = useMemo(() => {
     return weekDates.map((d) => {
       const { wd, num } = formatShortDay(d);
@@ -2213,7 +2190,7 @@ export default function AppAgenda() {
   const dayCounts = useMemo(() => {
     const counts = { total: dayAppointments.length, confirmed: 0, pending: 0, urgent: 0, recovered: 0 };
     dayAppointments.forEach((a) => {
-      const t = toneForAppointment(a);
+      const t = a.tone || toneForAgendaSlot(a);
       if (t === "green") counts.confirmed += 1;
       if (t === "orange") counts.pending += 1;
       if (t === "red") counts.urgent += 1;
@@ -2235,7 +2212,7 @@ export default function AppAgenda() {
   const monthCounts = useMemo(() => {
     const counts = { total: monthAppointments.length, confirmed: 0, pending: 0, urgent: 0, docs: 0, ordonnance: 0, recovered: 0 };
     monthAppointments.forEach((a) => {
-      const t = toneForAppointment(a);
+      const t = a.tone || toneForAgendaSlot(a);
       if (t === "green") counts.confirmed += 1;
       if (t === "orange") counts.pending += 1;
       if (t === "red") counts.urgent += 1;
@@ -2253,15 +2230,6 @@ export default function AppAgenda() {
       .slice(0, 4)
       .map(([date, count]) => ({ date, count, label: formatLongDate(date) }));
   }, [monthAppointments]);
-  const semanticLegend = [
-    { tone: "red", label: "Urgence / prioritaire" },
-    { tone: "blue", label: "Documents demandés" },
-    { tone: "indigo", label: "Ordonnance / renouvellement" },
-    { tone: "orange", label: "À confirmer / à réattribuer" },
-    { tone: "purple", label: "Créneau récupéré" },
-    { tone: "green", label: "Confirmé" },
-    { tone: "gray", label: "Indisponible / libre" },
-  ];
 
   const navLabel = viewMode === "month"
     ? formatMonthLabel(selectedDate)
@@ -2397,7 +2365,7 @@ export default function AppAgenda() {
         </div>
       ) : null}
       <div className="agenda-legend-row" style={S.legendRow}>
-        {semanticLegend.map((item) => {
+        {AGENDA_SEMANTIC_LEGEND.map((item) => {
           const tone = APPT_TONE[item.tone] || APPT_TONE.teal;
           const anchorId =
             item.tone === "purple"
@@ -2502,7 +2470,7 @@ export default function AppAgenda() {
                     </button>
                     <div style={S.monthApptList}>
                       {dayAppts.slice(0, maxVisible).map((a) => {
-                        const tone = APPT_TONE[toneForAppointment(a)] || APPT_TONE.teal;
+                        const tone = APPT_TONE[toneForAgendaSlot(a)] || APPT_TONE.teal;
                         return (
                         <button
                           key={a.id}
@@ -2646,12 +2614,12 @@ export default function AppAgenda() {
                         return (
                           <div key={`${d}-${hour}`} style={{ ...S.weekCell, ...(dayIdx % 2 === 0 ? S.weekCellAlt : {}) }}>
                             {cellAppts.map((a) => {
-                              const tone = APPT_TONE[toneForAppointment(a)] || APPT_TONE.teal;
+                              const tone = APPT_TONE[toneForAgendaSlot(a)] || APPT_TONE.teal;
                               return (
                                 <button key={a.id} type="button" className="agenda-appt-chip" onClick={(e) => { e.stopPropagation(); toggleAppt(a); }} style={{ ...S.weekChip, background: tone.bg, borderLeftColor: tone.border, ...(selectedAppt?.id === a.id ? { boxShadow: `0 0 0 2px ${tone.border}40` } : {}) }}>
                                   <div style={S.chipTop}>
                                     <span style={{ ...S.chipTime, color: tone.time }}>{a.displayTime}</span>
-                                    <span style={{ ...S.chipTag, color: tone.time }}>{semanticLabelForAppointment(a)}</span>
+                                    <span style={{ ...S.chipTag, color: tone.time }}>{semanticLabelForAgendaTone(a.tone || toneForAgendaSlot(a))}</span>
                                   </div>
                                   <span style={{ ...S.chipName, color: tone.text }}>{a.patient || "Patient"}</span>
                                 </button>
@@ -2754,7 +2722,7 @@ export default function AppAgenda() {
                           <div style={S.dayEmpty} />
                         ) : (
                           hourAppts.map((a) => {
-                            const tone = APPT_TONE[toneForAppointment(a)] || APPT_TONE.teal;
+                            const tone = APPT_TONE[toneForAgendaSlot(a)] || APPT_TONE.teal;
                             const isOpen = selectedAppt?.id === a.id;
                             return (
                               <div key={a.id}>
@@ -2772,7 +2740,7 @@ export default function AppAgenda() {
                                   <div style={S.dayCardTop}>
                                     <div style={{ ...S.dayCardTime, color: tone.time }}>{a.displayTime} – {a.endTime}</div>
                                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                      <span style={{ ...S.dayTag, color: tone.time, borderColor: `${tone.border}66` }}>{semanticLabelForAppointment(a)}</span>
+                                      <span style={{ ...S.dayTag, color: tone.time, borderColor: `${tone.border}66` }}>{semanticLabelForAgendaTone(a.tone || toneForAgendaSlot(a))}</span>
                                       {a.isUWI && <span style={S.aiBadge}>IA</span>}
                                     </div>
                                   </div>

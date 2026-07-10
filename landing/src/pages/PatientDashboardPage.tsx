@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
+import { patientAgendaRowStatus } from "../lib/agendaAppointmentSemantics.js";
 import { api } from "../lib/api.js";
 import { buildTenantRequestRows, filterOpenPatientRequests } from "../lib/requestUiStatus.js";
 import { buildAbsenceNoteText, normalizePatientInsightTags } from "../lib/patientInsightTags.js";
@@ -594,18 +595,6 @@ function frenchAppointmentDateParts(d: Date): { day: string; monthYear: string; 
     monthYear: d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }),
     dow: `${d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", "").toUpperCase()}.`,
   };
-}
-
-/** Libellé de statut pour liste / vignette RDV patient */
-function patientAgendaRowStatus(slot: Record<string, unknown>, start: Date): string {
-  const joined = `${slot.booking_status || ""} ${slot.status || ""}`.toLowerCase();
-  if (joined.includes("cancel") || joined.includes("annul")) return "Annulé";
-  if (start.getTime() >= Date.now()) {
-    if (joined.includes("pending")) return "À confirmer";
-    if (joined.includes("confirm")) return "Confirmé";
-    return "Confirmé";
-  }
-  return "Passé";
 }
 
 function formatBytes(value: number) {

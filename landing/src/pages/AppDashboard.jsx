@@ -10,6 +10,7 @@ import { agendaSlotDurationMinutes } from "../lib/agendaPatientMeta.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
 import { computeDashboardFillRate, mergeBookedEntryStarts } from "../lib/agendaFillRate.js";
+import { isRecoveredAgendaSlot } from "../lib/agendaAppointmentSemantics.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
 import { fetchTenantCallbacksCached, fetchTenantHandoffsCached } from "../lib/tenantRequestsCache.js";
@@ -186,11 +187,6 @@ function isCancellationCall(call) {
     || /annul/.test(summary)
     || result.includes("cancel")
     || result === "cancelled";
-}
-
-function isRecoveredAgendaSlot(slot) {
-  const text = `${slot?.patient || slot?.patient_name || ""} ${slot?.type || ""} ${slot?.motif || ""} ${slot?.slot_label || ""}`.toLowerCase();
-  return /récup|recup|repris|sauvé|sauve/.test(text);
 }
 
 function isBookedAppointmentSlot(slot) {

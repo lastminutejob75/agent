@@ -151,10 +151,6 @@ const CALLBACK_INTENT = /\b(etre\s+rappele|demande\s+de\s+rappel|rappelez[- ]?mo
 const MESSAGE_INTENT = /\b(laisser?\s+un\s+message|laisser?\s+un\s+mot|message\s+(?:au|pour)\s+(?:le\s+|la\s+)?(?:praticien|docteur|medecin|dentiste|cabinet))\b/iu;
 const MORE_SLOTS_REQUEST = /\b(voir\s+d['\u2019]?autres?\s+cr[eé]neaux|voir\s+plus\s+de\s+cr[eé]neaux|autres?\s+cr[eé]neaux|plus\s+de\s+cr[eé]neaux|aucun\s+ne\s+convient|autre\s+horaire)\b/iu;
 const CHAT_REPLY_TIMEOUT_MS = 45000;
-/** Délai avant d'afficher les créneaux déjà chargés dans la barre (sans attendre le moteur). */
-const CHAT_SLOTS_BAR_INSTANT_MS = 280;
-/** Repli barre si le SSE tarde encore (créneaux agenda pas prêts au 1er essai). */
-const CHAT_SLOTS_EARLY_FALLBACK_MS = 1800;
 const CHAT_UNCLEAR_FALLBACK =
   "Je peux vous aider à prendre un rendez-vous, répondre à une question, annuler ou modifier un rendez-vous. Que souhaitez-vous ?";
 const CHAT_MORE_SLOTS_PREFERENCES_PROMPT =
@@ -664,9 +660,23 @@ function formatChatSlotsProposalMessage(offers) {
   return `Créneaux disponibles :\n${lines}\n\nRépondez par le numéro (1, 2 ou 3), ou cliquez sur un créneau ci-dessous.`;
 }
 
+function slotOffersFingerprint(offers) {
+  return safeArray(offers)
+    .map((offer) => slotOfferIdentityKey(offer))
+    .filter(Boolean)
+    .sort()
+    .join("|");
+}
+
+function isSlotProposalClaraMessage(message) {
+  if (message?.from !== "clara") return false;
+  if (safeArray(message?.slots).length) return true;
+  return /^Cr[eé]neaux disponibles\s*:/i.test(String(message?.text || "").trim());
+}
+
 function isBookablePublicSlot(slot) {
   if (!slot) return false;
-  const startIso = String(slot?.startIso || "").trim();
+  const startIso = String(slot?.startIso || slot?.start_iso || "").trim();
   if (startIso) return true;
   const rawId = String(slot?.id || "").trim();
   return /^\d+$/.test(rawId);
@@ -1770,6 +1780,7 @@ export default function PagePubliquePraticienUWI() {
 
   const pushSlotProposal = useCallback((offers, messageText, { provisional = false } = {}) => {
     if (!offers.length || !messageText) return false;
+    const offerFingerprint = slotOffersFingerprint(offers);
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
@@ -1780,7 +1791,13 @@ export default function PagePubliquePraticienUWI() {
         slots: offers,
         ...(provisional ? { provisional: true } : {}),
       };
-      if (last?.from === "clara" && (isSlotsLookupPlaceholder(lastText) || last?.provisional)) {
+      const shouldReplaceLast = last?.from === "clara" && (
+        isSlotsLookupPlaceholder(lastText)
+        || last?.provisional
+        || safeArray(last?.slots).length > 0
+        || (offerFingerprint && slotOffersFingerprint(last?.slots) === offerFingerprint)
+      );
+      if (shouldReplaceLast) {
         return prev.slice(0, -1).concat([nextMsg]);
       }
       return prev.concat([nextMsg]);
@@ -2203,6 +2220,23 @@ export default function PagePubliquePraticienUWI() {
           const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
           if (
             last?.from === "clara"
+            && slotsPayload.length
+            && safeArray(last?.slots).length
+          ) {
+            const prevFp = slotOffersFingerprint(last.slots);
+            const nextFp = slotOffersFingerprint(slotsPayload);
+            if (prevFp && prevFp === nextFp) return prev;
+          }
+          if (
+            last?.from === "clara"
+            && isSlotProposalClaraMessage(last)
+            && !slotsPayload.length
+            && /^Cr[eé]neaux disponibles/i.test(text)
+          ) {
+            return prev;
+          }
+          if (
+            last?.from === "clara"
             && (isSlotsLookupPlaceholder(lastText) || last?.provisional)
           ) {
             return prev.slice(0, -1).concat([
@@ -2514,19 +2548,6 @@ export default function PagePubliquePraticienUWI() {
         return applyBarSlotsFallback({ provisional: true });
       };
 
-      if (isSlotsLookup && allowSlotsReuse) {
-        timers.push(
-          window.setTimeout(() => {
-            void tryShowCachedSlots();
-          }, CHAT_SLOTS_BAR_INSTANT_MS),
-        );
-        timers.push(
-          window.setTimeout(() => {
-            void tryShowCachedSlots({ refresh: true });
-          }, CHAT_SLOTS_EARLY_FALLBACK_MS),
-        );
-      }
-
       let gotFinalReply = false;
       try {
         let response;
@@ -2560,7 +2581,7 @@ export default function PagePubliquePraticienUWI() {
         // ne jamais arriver derrière le proxy (cause des blocages "recherche de créneaux").
         if (!gotFinalReply && isSlotsLookup && !isMoreSlotsLookup) {
           const directText = String(response?.reply || "").trim();
-          if (directText) {
+          if (directText && !/^Cr[eé]neaux disponibles/i.test(directText)) {
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               const lastText = last?.from === "clara" ? String(last?.text || "").trim() : "";
@@ -2568,6 +2589,7 @@ export default function PagePubliquePraticienUWI() {
               if (last?.from === "clara" && (isSlotsLookupPlaceholder(lastText) || last?.provisional)) {
                 return prev.slice(0, -1).concat([nextMsg]);
               }
+              if (last?.from === "clara" && isSlotProposalClaraMessage(last)) return prev;
               if (last?.from === "clara" && lastText === directText) return prev;
               return prev.concat([nextMsg]);
             });
