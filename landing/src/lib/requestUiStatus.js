@@ -80,7 +80,18 @@ export function shouldShowCallInRequestInbox(call, callbacks = []) {
 }
 
 export function callbackRequestSourceLabel(callback) {
-  return String(callback?.source || "").toLowerCase() === "vocal_agent" ? "Appel vocal" : "Page publique";
+  return requestSourceLabel(callback?.source, "Page publique");
+}
+
+/** Trois libellés d'origine communs aux dashboards et fiches. */
+export function requestSourceLabel(value, fallback = "Agent vocal") {
+  const source = String(value || "").trim().toLowerCase();
+  if (source === "public_page" || source === "page_publique") return "Page publique";
+  if (source === "praticien" || source === "cabinet" || source === "agenda") return "Praticien";
+  if (source === "vocal_agent" || source === "voice" || source === "vapi" || source === "call") {
+    return "Agent vocal";
+  }
+  return fallback;
 }
 
 export function callbackRequestStatusRaw(callback) {
@@ -179,7 +190,7 @@ export function buildTenantRequestRows(calls = [], handoffs = [], callbacks = []
         phone: c.customer_number || "",
         createdAtLabel: formatRequestDate(c.started_at || c.last_event_at),
         createdAt: c.started_at || c.last_event_at,
-        source: "Via appel",
+        source: requestSourceLabel(c.source),
       };
     });
 
@@ -199,7 +210,7 @@ export function buildTenantRequestRows(calls = [], handoffs = [], callbacks = []
         phone: h.patient_phone || "",
         createdAtLabel: formatRequestDate(h.created_at),
         createdAt: h.created_at,
-        source: isLiveTransferHandoff(h) ? "Transfert live" : "Appel vocal",
+        source: requestSourceLabel(h.source),
         handoffId: h.id || null,
       };
     });

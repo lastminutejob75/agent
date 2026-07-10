@@ -57,7 +57,10 @@ def _slot_get(slot: Any, key: str, default: Any = None) -> Any:
 
 
 def _resolve_slot_id_from_start_iso(
-    start_iso: str, source: str = "sqlite", tenant_id: int = 1
+    start_iso: str,
+    source: str = "sqlite",
+    tenant_id: int = 1,
+    timezone_name: str = "Europe/Paris",
 ) -> Optional[int]:
     """
     Fallback: retrouve slot_id à partir de start_iso quand slot_id manque (session perdue).
@@ -72,7 +75,12 @@ def _resolve_slot_id_from_start_iso(
         if source == "pg":
             try:
                 from backend.slots_pg import pg_find_slot_id_by_datetime
-                return pg_find_slot_id_by_datetime(date_str, time_str, tenant_id=tenant_id)
+                return pg_find_slot_id_by_datetime(
+                    date_str,
+                    time_str,
+                    tenant_id=tenant_id,
+                    tz_name=timezone_name,
+                )
             except Exception:
                 pass
         from backend.db import find_slot_id_by_datetime
@@ -82,7 +90,11 @@ def _resolve_slot_id_from_start_iso(
         return None
 
 
-def _ensure_local_slot_id_from_start_iso(start_iso: str, tenant_id: int = 1) -> Optional[int]:
+def _ensure_local_slot_id_from_start_iso(
+    start_iso: str,
+    tenant_id: int = 1,
+    timezone_name: str = "Europe/Paris",
+) -> Optional[int]:
     """
     Garantit l'existence d'un slot local à partir d'un ISO start pour le miroir interne.
     """
@@ -92,6 +104,17 @@ def _ensure_local_slot_id_from_start_iso(start_iso: str, tenant_id: int = 1) -> 
         dt = datetime.fromisoformat(str(start_iso).replace("Z", "+00:00"))
         date_str = dt.strftime("%Y-%m-%d")
         time_str = dt.strftime("%H:%M")
+        if config.USE_PG_SLOTS:
+            from backend.slots_pg import pg_ensure_slot_id_by_datetime
+
+            slot_id = pg_ensure_slot_id_by_datetime(
+                date_str,
+                time_str,
+                tenant_id=tenant_id,
+                tz_name=timezone_name,
+            )
+            if slot_id is not None:
+                return slot_id
         from backend.db import ensure_slot_id_by_datetime
 
         return ensure_slot_id_by_datetime(date_str, time_str, tenant_id=tenant_id)
@@ -144,7 +167,11 @@ def _mirror_google_booking_to_internal(session: Any, start_iso: str, event_id: s
     Ne doit jamais faire échouer le booking Google principal.
     """
     tenant_id = getattr(session, "tenant_id", None) or 1
-    slot_id = _ensure_local_slot_id_from_start_iso(start_iso, tenant_id=tenant_id)
+    slot_id = _ensure_local_slot_id_from_start_iso(
+        start_iso,
+        tenant_id=tenant_id,
+        timezone_name=_tenant_timezone_name(tenant_id),
+    )
     if slot_id is None:
         logger.warning(
             "BOOKING_MIRROR_INTERNAL_FAILED tenant_id=%s conv_id=%s reason=slot_unavailable start=%s event_id=%s",
@@ -1493,6 +1520,7 @@ def _get_slots_from_google_calendar(
 
     rules = get_booking_rules(tenant_id)
     tenant_tz = _tenant_zoneinfo(tenant_id)
+    tenant_tz_name = _tenant_timezone_name(tenant_id)
     duration_minutes = rules["duration_minutes"]
     base_start = rules["start_hour"]
     base_end = rules["end_hour"]
@@ -1517,12 +1545,14 @@ def _get_slots_from_google_calendar(
     else:
         day_horizon = 14 if target_pool_size >= SLOTS_POOL_SIZE_MORE else 8
         for day_offset in range(0, day_horizon):
-            dt = datetime.now() + timedelta(days=day_offset)
+            dt = datetime.now(tenant_tz).replace(tzinfo=None) + timedelta(days=day_offset)
             if dt.weekday() not in booking_days:
                 continue
             candidate_dates.append(dt)
 
-    batched_getter = getattr(calendar, "get_free_slots_range", None)
+    service_getter = getattr(calendar, "_get_service", None)
+    calendar_target = service_getter() if callable(service_getter) else calendar
+    batched_getter = getattr(calendar_target, "get_free_slots_range", None)
     if callable(batched_getter) and candidate_dates:
         batch_slots = batched_getter(
             dates=candidate_dates,
@@ -1531,6 +1561,7 @@ def _get_slots_from_google_calendar(
             end_hour=end_hour,
             limit=target_pool_size,
             buffer_minutes=buffer_minutes,
+            timezone_name=tenant_tz_name,
         )
         if batch_slots:
             days_fr = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
@@ -1567,13 +1598,14 @@ def _get_slots_from_google_calendar(
     for date in candidate_dates:
         if len(pool) >= target_pool_size:
             break
-        day_slots = calendar.get_free_slots(
+        day_slots = calendar_target.get_free_slots(
             date=date,
             duration_minutes=duration_minutes,
             start_hour=start_hour,
             end_hour=end_hour,
             limit=per_day,
             buffer_minutes=buffer_minutes,
+            timezone_name=tenant_tz_name,
         )
         if not day_slots:
             continue
@@ -1653,9 +1685,18 @@ def _get_slots_from_local(
             )
             pg_cleanup_and_ensure_slots(tenant_id)
             if target_date is not None:
-                raw = pg_list_free_slots_for_date(tenant_id, target_date.isoformat())
+                raw = pg_list_free_slots_for_date(
+                    tenant_id,
+                    target_date.isoformat(),
+                    tz_name=_tenant_timezone_name(tenant_id),
+                )
             else:
-                raw = pg_list_free_slots(tenant_id, limit=pool_limit, pref=pref)
+                raw = pg_list_free_slots(
+                    tenant_id,
+                    limit=pool_limit,
+                    pref=pref,
+                    tz_name=_tenant_timezone_name(tenant_id),
+                )
             if raw:
                 pool = [_to_slot_display(r, i, "pg") for i, r in enumerate(raw[:pool_limit], start=1)]
                 if target_date is not None:
@@ -1872,7 +1913,12 @@ def book_slot_from_session(session, choice_index_1based: int) -> tuple[bool, str
             start_val = chosen.get("start_iso") or chosen.get("start")
             if slot_id is None and start_val:
                 tenant_id = getattr(session, "tenant_id", None) or 1
-                slot_id = _resolve_slot_id_from_start_iso(start_val, source=src, tenant_id=tenant_id)
+                slot_id = _resolve_slot_id_from_start_iso(
+                    start_val,
+                    source=src,
+                    tenant_id=tenant_id,
+                    timezone_name=_tenant_timezone_name(tenant_id),
+                )
             if slot_id is None:
                 logger.warning(
                     "[BOOKING_TECH_REASON] conv_id=%s reason=slot_id_missing chosen=%s",
@@ -1972,13 +2018,21 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
     def _try_once() -> tuple[bool, str | None]:
         try:
             bo = _persisted_booking_origin(session)
-            event_id = calendar.book_appointment(
+            # L'adapter historique ne porte pas encore timezone_name : utiliser
+            # son service sous-jacent quand il est disponible.
+            service_getter = getattr(calendar, "_get_service", None)
+            booking_target = service_getter() if callable(service_getter) else calendar
+            if not booking_target:
+                return False, "technical"
+            event_id = booking_target.book_appointment(
                 start_time=start_iso,
                 end_time=end_iso,
                 patient_name=session.qualif_data.name or "Client",
                 patient_contact=session.qualif_data.contact or "",
                 motif=session.qualif_data.motif or "Consultation",
                 booking_origin=bo,
+                timezone_name=_tenant_timezone_name(getattr(session, "tenant_id", None) or 1),
+                booking_code=getattr(session, "booking_code", None),
             )
             if event_id:
                 session.google_event_id = event_id
@@ -2000,16 +2054,9 @@ def _book_google_by_iso(session, start_iso: str, end_iso: str) -> tuple[bool, st
 
     try:
         ok, reason = _try_once()
-        if ok:
-            return True, None
-        # Pas de retry pour permission ni technical (403 / timeouts / 5xx / 400)
-        if reason in ("technical", "permission"):
-            return False, reason
-        logger.info("Retry booking Google Calendar pour conv_id=%s", getattr(session, "conv_id", ""))
-        ok2, reason2 = _try_once()
-        if ok2:
-            return True, None
-        return False, reason2 or "slot_taken"
+        # Aucun second insert ici : book_appointment effectue lui-même un lookup
+        # idempotent après toute réponse ambiguë.
+        return (True, None) if ok else (False, reason or "slot_taken")
     except Exception as e:
         logger.error(
             "[BOOKING_TECH_REASON] _book_google_by_iso exception type=%s msg=%s",
@@ -2087,13 +2134,17 @@ def _book_via_google_calendar(session, idx: int, calendar=None) -> bool:
     
     bo = _persisted_booking_origin(session)
     # Créer le RDV
-    event_id = calendar.book_appointment(
+    service_getter = getattr(calendar, "_get_service", None)
+    booking_target = service_getter() if callable(service_getter) else calendar
+    event_id = booking_target.book_appointment(
         start_time=slot["start"],
         end_time=slot["end"],
         patient_name=session.qualif_data.name or "Client",
         patient_contact=session.qualif_data.contact or "",
         motif=session.qualif_data.motif or "Consultation",
         booking_origin=bo,
+        timezone_name=_tenant_timezone_name(getattr(session, "tenant_id", None) or 1),
+        booking_code=getattr(session, "booking_code", None),
     )
     
     if event_id:

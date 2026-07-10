@@ -36,6 +36,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,10 @@ def _build_google_lookup(tenant_id: int, events: List[Dict[str, Any]], tz_name: 
             "summary": summary,
             "is_uwi": is_uwi,
             "contact": normalize_phone_number(contact) if contact else "",
+            "raw_contact": contact,
             "name": name,
+            "motif": _extract_google_description_line(description, "Motif") if is_uwi else "",
+            "start_iso": start_local.isoformat(),
         })
     return index
 
@@ -167,6 +171,7 @@ def reconcile_tenant(tenant_id: int, window_days: int = 30, dry_run: bool = Fals
         "local_mirrors": 0,
         "orphan_mirrors_removed": 0,
         "orphan_google_events": 0,
+        "orphan_google_mirrors_recreated": 0,
         "errors": [],
         "dry_run": dry_run,
     }
@@ -246,6 +251,34 @@ def reconcile_tenant(tenant_id: int, window_days: int = 30, dry_run: bool = Fals
                 "[RECONCILE] orphan_google_event tenant_id=%s event_id=%s key=%s name=%s contact=%s",
                 tenant_id, g.get("event_id"), key, g.get("name"), g.get("contact"),
             )
+            if dry_run:
+                continue
+            try:
+                from backend import tools_booking
+
+                event_id = str(g.get("event_id") or "").strip()
+                start_iso = str(g.get("start_iso") or "").strip()
+                if not event_id or not start_iso:
+                    continue
+                contact = str(g.get("raw_contact") or g.get("contact") or "").strip()
+                session = SimpleNamespace(
+                    tenant_id=tenant_id,
+                    conv_id="calendar-reconciliation",
+                    booking_origin=None,
+                    booking_code=None,
+                    qualif_data=SimpleNamespace(
+                        name=str(g.get("name") or "Client"),
+                        contact=contact,
+                        contact_type="email" if "@" in contact else "phone",
+                        motif=str(g.get("motif") or "Consultation"),
+                    ),
+                )
+                if tools_booking._mirror_google_booking_to_internal(session, start_iso, event_id):
+                    report["orphan_google_mirrors_recreated"] += 1
+                else:
+                    report["errors"].append(f"mirror_recreate_failed_event_{event_id}")
+            except Exception as e:
+                report["errors"].append(f"mirror_recreate_exception_event_{g.get('event_id')}: {e}")
 
     return report
 

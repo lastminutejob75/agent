@@ -61,6 +61,16 @@ function agendaSlotRichnessScore(slot) {
   return score;
 }
 
+function mergeAgendaSlotCopies(first, second) {
+  const richer = agendaSlotRichnessScore(second) > agendaSlotRichnessScore(first) ? second : first;
+  const other = richer === second ? first : second;
+  const merged = { ...other, ...richer };
+  for (const [key, value] of Object.entries(other || {})) {
+    if (merged[key] == null || merged[key] === "") merged[key] = value;
+  }
+  return merged;
+}
+
 /** Supprime les créneaux en double (même événement Google ou même horaire + patient). */
 export function dedupeAgendaSlots(slots) {
   if (!Array.isArray(slots) || !slots.length) return [];
@@ -69,9 +79,7 @@ export function dedupeAgendaSlots(slots) {
     const start = parseAgendaSlotStart(slot);
     const key = agendaSlotDedupeKey(slot, start);
     const prev = byKey.get(key);
-    if (!prev || agendaSlotRichnessScore(slot) > agendaSlotRichnessScore(prev)) {
-      byKey.set(key, slot);
-    }
+    byKey.set(key, prev ? mergeAgendaSlotCopies(prev, slot) : slot);
   }
   return [...byKey.values()];
 }

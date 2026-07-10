@@ -5,6 +5,7 @@ import os
 import uuid
 import json
 import smtplib
+import hashlib
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
@@ -552,7 +553,8 @@ def _insert_booking(
     status: str = "pending",
     booking_code: Optional[str] = None,
     google_event_id: Optional[str] = None,
-) -> Dict[str, str]:
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
     from backend.public_bookings_pg import insert_public_booking
 
     tid: Optional[int] = None
@@ -573,6 +575,7 @@ def _insert_booking(
         start_iso=(payload.startIso or "").strip() or None,
         booking_code=booking_code,
         google_event_id=google_event_id,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -1164,50 +1167,84 @@ def _book_real_slot(
     return False, "technical", None
 
 
-def _confirm_public_booking_in_background(
-    tenant_id: int,
-    payload: PublicBookingRequest,
-    confirmation_id: str,
-    booking_code: Optional[str],
-) -> None:
-    """Réservation agenda réelle (Google/PG/SQLite) hors du chemin de réponse.
+def _public_booking_idempotency_key(tenant_id: int, payload: PublicBookingRequest) -> str:
+    """Clé stable d'un double-submit sans exposer les données patient."""
+    canonical = "\x1f".join(
+        [
+            str(int(tenant_id)),
+            (payload.slug or "").strip().lower(),
+            (payload.slotSource or "").strip().lower(),
+            (payload.slotId or "").strip(),
+            (payload.startIso or "").strip(),
+            (payload.patientPhone or "").strip(),
+            (payload.motif or "").strip().casefold(),
+        ]
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    La demande est déjà persistée dans public_bookings (source de vérité pour
-    l'agenda interne + les notifications). On confirme ici l'agenda externe sans
-    rallonger la réponse côté patient. En cas de succès on rattache l'event
-    Google; en cas d'échec on logge et le cabinet traite la demande manuellement.
-    """
+
+def _rate_limit_public_book(request: Request, slug: str) -> None:
+    from backend.rate_limit import check_sliding_window, client_ip
+
+    ip = client_ip(request)
+    clean_slug = (slug or "").strip().lower()[:160]
     try:
-        ok, reason, google_event_id = _book_real_slot(int(tenant_id), payload, booking_code)
-    except Exception as exc:  # noqa: BLE001
+        check_sliding_window(f"public_book_ip_slug:{ip}:{clean_slug}", limit=8, window_sec=60)
+        check_sliding_window(f"public_book_ip:{ip}", limit=30, window_sec=3600)
+        check_sliding_window(f"public_book_slug:{clean_slug}", limit=60, window_sec=60)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+def _rollback_public_booking_reservation(
+    tenant_id: int,
+    google_event_id: Optional[str],
+    booking_code: Optional[str] = None,
+) -> None:
+    """Compensation best-effort si la persistance échoue après réservation."""
+    event_id = (google_event_id or "").strip()
+    try:
+        from backend.public_appointment_actions import _cancel_all_for_booking
+
+        _cancel_all_for_booking(
+            int(tenant_id),
+            {"source_type": "reservation_rollback", "google_event_id": event_id},
+            (booking_code or "").strip(),
+            strict_google=False,
+        )
+    except Exception as exc:
         logger.error(
-            "public_book background reservation crashed slug=%s id=%s: %s",
-            payload.slug,
-            confirmation_id,
+            "public_book rollback reservation failed tenant=%s event=%s code=%s: %s",
+            tenant_id,
+            event_id[:80],
+            (booking_code or "")[:12],
             exc,
             exc_info=True,
         )
-        return
-    if not ok:
-        logger.warning(
-            "public_book background reservation failed slug=%s id=%s reason=%s",
-            payload.slug,
-            confirmation_id,
-            reason,
-        )
-        return
-    if google_event_id and confirmation_id:
-        try:
-            from backend.public_bookings_pg import attach_public_booking_google_event
 
-            attach_public_booking_google_event(int(tenant_id), confirmation_id, google_event_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "public_book attach google event failed slug=%s id=%s: %s",
-                payload.slug,
-                confirmation_id,
-                exc,
-            )
+
+def _public_booking_response(
+    payload: PublicBookingRequest,
+    booking_record: Dict[str, Any],
+    *,
+    idempotent: bool = False,
+) -> Dict[str, Any]:
+    from backend.booking_code import format_booking_code
+
+    return {
+        "confirmationId": str(booking_record.get("id") or ""),
+        "bookingCode": format_booking_code(str(booking_record.get("booking_code") or "")),
+        "slotLabel": str(booking_record.get("slot_label") or payload.slotLabel),
+        "status": "confirmed",
+        "confirmed": True,
+        "bookingReason": None,
+        "patientSmsSent": None,
+        "cabinetSmsSent": None,
+        "cabinetEmailSent": None,
+        "notificationsPending": not idempotent,
+        "idempotent": idempotent,
+        "followup": {"enabled": False, "whatsappUrl": None},
+    }
 
 
 def _format_public_slot(raw: Dict[str, Any], today: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -1600,43 +1637,87 @@ async def public_sitemap() -> Response:
 async def public_book(
     payload: PublicBookingRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
 ) -> Dict[str, Any]:
     """Réservation publique: validation + réservation réelle + persistance."""
+    _rate_limit_public_book(request, payload.slug)
     payload = _sanitize_public_booking_payload(payload)
-    tenant_id = _tenant_id_from_booking_payload(payload)
-    tenant_id_raw: Optional[Any] = tenant_id
+    if (payload.slotSource or "").strip().lower() == "demo":
+        raise HTTPException(status_code=422, detail="Un créneau de démonstration ne peut pas être réservé.")
+    requested_tenant_id = _tenant_id_from_booking_payload(payload)
+    tenant_id = _coerce_tenant_id_for_db(_resolve_tenant_id(payload.slug))
     if tenant_id is None:
-        tenant_id = _coerce_tenant_id_for_db(_resolve_tenant_id(payload.slug))
-        tenant_id_raw = tenant_id
+        raise HTTPException(status_code=404, detail="Cabinet ou créneau réel introuvable.")
+    if requested_tenant_id is not None and requested_tenant_id != tenant_id:
+        raise HTTPException(status_code=422, detail="Le cabinet ne correspond pas à cette page publique.")
     payload = _align_public_booking_patient_name(tenant_id, payload)
+    idempotency_key = _public_booking_idempotency_key(tenant_id, payload)
+    from backend.public_bookings_pg import get_public_booking_by_idempotency_key
 
-    # La demande est enregistrée immédiatement (un seul insert PG, le code de
-    # réservation est généré dans la même transaction). La réservation agenda
-    # externe (Google/PG/SQLite) est faite en tâche de fond pour NE PAS rallonger
-    # la confirmation côté patient : public_bookings est la source de vérité pour
-    # l'agenda interne + les notifications.
-    booking_status = "confirmed"
-    booking_reason: Optional[str] = None
-    booking_code: Optional[str] = None
+    try:
+        existing = get_public_booking_by_idempotency_key(tenant_id, idempotency_key)
+    except Exception as exc:
+        logger.error("public_book idempotency lookup failed slug=%s: %s", payload.slug, exc)
+        raise HTTPException(status_code=502, detail="Impossible de vérifier cette réservation.") from exc
+    if existing and existing.get("status") == "confirmed":
+        return _public_booking_response(payload, existing, idempotent=True)
 
-    booking_record = _insert_booking(
-        payload,
-        str(tenant_id) if tenant_id else tenant_id_raw,
-        status=booking_status,
-        booking_code=booking_code,
-        google_event_id=None,
-    )
-    confirmation_id = booking_record.get("id") or ""
-    booking_code = booking_record.get("booking_code") or booking_code or ""
+    from backend.booking_code import create_unique_booking_code_for_tenant
 
-    if tenant_id is not None and confirmation_id:
-        background_tasks.add_task(
-            _confirm_public_booking_in_background,
+    booking_code = create_unique_booking_code_for_tenant(tenant_id)
+    try:
+        booked, booking_reason, google_event_id = _book_real_slot(
             int(tenant_id),
             payload,
-            confirmation_id,
-            booking_code,
+            booking_code=booking_code,
         )
+    except Exception as exc:
+        logger.error("public_book reservation crashed slug=%s: %s", payload.slug, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Impossible de confirmer ce rendez-vous.") from exc
+    if not booked:
+        # Une requête concurrente identique peut avoir gagné entre le pré-check
+        # et la tentative agenda. Dans ce cas on restitue sa confirmation.
+        if booking_reason == "slot_taken":
+            try:
+                existing = get_public_booking_by_idempotency_key(tenant_id, idempotency_key)
+            except Exception as exc:
+                logger.error("public_book race lookup failed slug=%s: %s", payload.slug, exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Impossible de vérifier cette réservation.",
+                ) from exc
+            if existing and existing.get("status") == "confirmed":
+                return _public_booking_response(payload, existing, idempotent=True)
+            raise HTTPException(
+                status_code=409,
+                detail="Ce créneau n'est plus disponible. Choisissez un autre horaire.",
+            )
+        raise HTTPException(status_code=502, detail="Impossible de confirmer ce rendez-vous.")
+
+    try:
+        booking_record = _insert_booking(
+            payload,
+            str(tenant_id),
+            status="confirmed",
+            booking_code=booking_code,
+            google_event_id=google_event_id,
+            idempotency_key=idempotency_key,
+        )
+    except Exception as exc:
+        _rollback_public_booking_reservation(tenant_id, google_event_id, booking_code)
+        raise HTTPException(
+            status_code=502,
+            detail="Le rendez-vous a été réservé mais n'a pas pu être enregistré.",
+        ) from exc
+
+    if not booking_record.get("created", True):
+        if google_event_id != booking_record.get("google_event_id"):
+            _rollback_public_booking_reservation(tenant_id, google_event_id, booking_code)
+        return _public_booking_response(payload, booking_record, idempotent=True)
+
+    booking_status = "confirmed"
+    confirmation_id = str(booking_record.get("id") or "")
+    booking_code = str(booking_record.get("booking_code") or booking_code)
 
     # Décision produit stricte: aucune création / mise à jour automatique de fiche
     # patient depuis la prise de RDV publique. La reconnaissance "patient connu"
@@ -1670,18 +1751,4 @@ async def public_book(
         confirmation_id,
         booking_status,
     )
-    from backend.booking_code import format_booking_code
-
-    return {
-        "confirmationId": confirmation_id,
-        "bookingCode": format_booking_code(booking_code),
-        "slotLabel": payload.slotLabel,
-        "status": booking_status,
-        "confirmed": booking_status == "confirmed",
-        "bookingReason": booking_reason,
-        "patientSmsSent": None,
-        "cabinetSmsSent": None,
-        "cabinetEmailSent": None,
-        "notificationsPending": True,
-        "followup": {"enabled": False, "whatsappUrl": None},
-    }
+    return _public_booking_response(payload, booking_record)

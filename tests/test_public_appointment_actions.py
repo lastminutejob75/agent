@@ -1,6 +1,7 @@
 from backend.booking_code import format_booking_code, normalize_booking_code
 from backend.public_action_tokens import decode_public_action_token, issue_public_action_token
 from backend.public_bookings_pg import _contact_email_matches, _contact_phone_matches
+from fastapi import HTTPException
 
 
 def test_public_action_token_roundtrip():
@@ -49,6 +50,11 @@ def test_public_callback_request_links_appointment_from_token(monkeypatch):
         routes,
         "find_registered_patient",
         lambda tenant_id, phone=None, email=None: {"phone": phone or "+33612345678"},
+    )
+    monkeypatch.setattr(
+        routes,
+        "verify_registered_patient_2fa",
+        lambda tenant_id, phone=None, email=None, name=None: {"phone": phone},
     )
     monkeypatch.setattr(
         "backend.public_action_tokens.decode_public_action_token",
@@ -172,3 +178,103 @@ def test_cancel_appointment_triggers_notifications(monkeypatch):
     assert len(calls) == 1
     assert calls[0]["slug"] == "cabinet-demo"
     assert calls[0]["booking_code"] == "GTYEGG"
+
+
+def test_public_reschedule_books_and_persists_before_cancelling_old(monkeypatch):
+    from backend import public_appointment_actions as actions
+
+    order = []
+    old_record = {
+        "source_type": "public_booking",
+        "id": "old-1",
+        "booking_code": "OLDCODE",
+        "patient_name": "Jean Dupont",
+        "patient_phone": "+33612345678",
+        "motif": "Consultation",
+    }
+    monkeypatch.setattr(
+        "backend.routes.public_pages._book_real_slot",
+        lambda *a, **k: order.append("book_new") or (True, None, "evt-new"),
+    )
+    monkeypatch.setattr(
+        actions,
+        "insert_public_booking",
+        lambda **kwargs: order.append("persist_new") or {"id": kwargs["booking_id"]},
+    )
+    monkeypatch.setattr(
+        actions,
+        "_cancel_all_for_booking",
+        lambda *a, **k: order.append("cancel_old") or True,
+    )
+    monkeypatch.setattr(
+        "backend.booking_code.create_unique_booking_code_for_tenant",
+        lambda tenant_id: "NEWCODE",
+    )
+    monkeypatch.setattr(
+        "backend.public_action_notifications.dispatch_public_reschedule_notifications",
+        lambda **kwargs: None,
+    )
+
+    out = actions._reschedule_public_booking(
+        2,
+        old_record,
+        slug="cabinet-demo",
+        new_slot_id="42",
+        slot_label="demain a 10:00",
+        start_iso="2026-07-20T10:00:00+02:00",
+        end_iso="2026-07-20T10:15:00+02:00",
+        slot_source="google",
+    )
+    assert out["rescheduled"] is True
+    assert order == ["book_new", "persist_new", "cancel_old"]
+
+
+def test_public_reschedule_compensates_new_when_old_cancel_fails(monkeypatch):
+    from backend import public_appointment_actions as actions
+
+    cancelled_ids = []
+    old_record = {
+        "source_type": "public_booking",
+        "id": "old-1",
+        "booking_code": "OLDCODE",
+        "patient_name": "Jean Dupont",
+        "patient_phone": "+33612345678",
+        "motif": "Consultation",
+    }
+    monkeypatch.setattr(
+        "backend.routes.public_pages._book_real_slot",
+        lambda *a, **k: (True, None, "evt-new"),
+    )
+    monkeypatch.setattr(
+        actions,
+        "insert_public_booking",
+        lambda **kwargs: {"id": kwargs["booking_id"]},
+    )
+    monkeypatch.setattr(
+        "backend.booking_code.create_unique_booking_code_for_tenant",
+        lambda tenant_id: "NEWCODE",
+    )
+
+    def _cancel(_tenant_id, record, _code, **kwargs):
+        cancelled_ids.append(str(record.get("id")))
+        return str(record.get("id")) != "old-1"
+
+    monkeypatch.setattr(actions, "_cancel_all_for_booking", _cancel)
+
+    try:
+        actions._reschedule_public_booking(
+            2,
+            old_record,
+            slug="cabinet-demo",
+            new_slot_id="42",
+            slot_label="demain a 10:00",
+            start_iso="2026-07-20T10:00:00+02:00",
+            end_iso="2026-07-20T10:15:00+02:00",
+            slot_source="google",
+        )
+        assert False, "HTTPException attendue"
+    except HTTPException as exc:
+        assert exc.status_code == 502
+    assert cancelled_ids[0] == "old-1"
+    assert len(cancelled_ids) == 2
+    assert cancelled_ids[1] != "old-1"

@@ -17,6 +17,36 @@ describe("dedupeAgendaSlots", () => {
     expect(out[0].patient_phone).toBe("+33601020304");
   });
 
+  it("fusionne un événement Google et son miroir local sans perdre les identifiants d'action", () => {
+    const slots = [
+      {
+        event_id: "google-evt-42",
+        patient: "Marie Dupont",
+        patient_phone: "+33601020304",
+        start_iso: "2026-06-03T09:00:00",
+        source: "UWI",
+      },
+      {
+        event_id: "google-evt-42",
+        appointment_id: 42,
+        slot_id: 84,
+        patient: "Marie Dupont",
+        start_iso: "2026-06-03T09:00:00",
+        source: "UWI",
+      },
+    ];
+
+    const out = dedupeAgendaSlots(slots);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      event_id: "google-evt-42",
+      appointment_id: 42,
+      slot_id: 84,
+      patient_phone: "+33601020304",
+    });
+  });
+
   it("fusionne même horaire et même patient sans event_id", () => {
     const slots = [
       { patient: "Georges Wassiuf", start_iso: "2026-06-03T09:15:00" },

@@ -6,11 +6,15 @@ import {
   formatAgendaSlotHour,
   parseAgendaSlotStart,
 } from "../lib/agendaSlotParse.js";
-import { agendaSlotDurationMinutes } from "../lib/agendaPatientMeta.js";
+import { agendaOriginLabel, agendaSlotDurationMinutes } from "../lib/agendaPatientMeta.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
 import { computeDashboardFillRate, mergeBookedEntryStarts } from "../lib/agendaFillRate.js";
-import { isRecoveredAgendaSlot } from "../lib/agendaAppointmentSemantics.js";
+import {
+  countRecoveredAgendaSlotsInPeriod,
+  isAgendaSlotCancelled,
+  patientAgendaRowStatus,
+} from "../lib/agendaAppointmentSemantics.js";
 import HomeHeroSection from "../components/home/HomeHeroSection.jsx";
 import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "../lib/requestUiStatus.js";
 import { fetchTenantCallbacksCached, fetchTenantHandoffsCached } from "../lib/tenantRequestsCache.js";
@@ -190,6 +194,7 @@ function isCancellationCall(call) {
 }
 
 function isBookedAppointmentSlot(slot) {
+  if (isAgendaSlotCancelled(slot)) return false;
   const appointmentId = Number(slot?.appointment_id || 0);
   const eventId = String(slot?.event_id || "").trim();
   const patientLike = String(
@@ -436,9 +441,7 @@ export default function AppDashboard() {
   const nextLabels = firstDateLabel(nextDate);
   const nextHour = nextDate ? formatAgendaSlotHour(nextDate) : "—";
   const nextReason = agendaSlotMotif(nextSlot?.slot || null) || "Consultation";
-  const nextSource = nextSlot?.slot
-    ? (String(nextSlot.slot.source || "").toUpperCase() === "UWI" ? "Pris par Clara" : "Agenda cabinet")
-    : "Agenda cabinet";
+  const nextSource = nextSlot?.slot ? agendaOriginLabel(nextSlot.slot) : "Praticien";
   const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "Patient").trim() || "Patient";
   const nextDurationMinutes = nextSlot?.slot
     ? agendaSlotDurationMinutes(nextSlot.slot, bookingDurationMinutes)
@@ -566,7 +569,7 @@ export default function AppDashboard() {
     const { slot, start } = entry;
     const name = String(slot?.patient || slot?.patient_name || "Patient").trim();
     const reason = agendaSlotMotif(slot) || "Consultation";
-    const status = String(slot?.status || "").toLowerCase() === "confirmed" ? "Confirmé" : "Prévu";
+    const status = patientAgendaRowStatus(slot, start);
     const focus = slot?.appointment_id || slot?.event_id || name;
     return {
       key: `${start?.toISOString?.() || "na"}-${focus}`,
@@ -639,8 +642,14 @@ export default function AppDashboard() {
     [calls, today],
   );
   const recoveredCount = useMemo(
-    () => agenda.filter(isRecoveredAgendaSlot).length,
-    [agenda],
+    () => {
+      const periodStart = new Date(today);
+      periodStart.setHours(0, 0, 0, 0);
+      const periodEnd = new Date(periodStart);
+      periodEnd.setDate(periodEnd.getDate() + 7);
+      return countRecoveredAgendaSlotsInPeriod(agenda, periodStart, periodEnd);
+    },
+    [agenda, today],
   );
 
   const vapiConnected = connections.vapi?.connected ?? Boolean(me?.assistant_live);
@@ -648,7 +657,7 @@ export default function AppDashboard() {
 
   const agendaTodayHref = `/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`;
   const bookingsTodayHref = `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}&focus=prises-jour`;
-  const agendaAnnulationsHref = `/app/appels?type=annulation&period=today`;
+  const agendaAnnulationsHref = "/app/appels";
   const agendaCreneauxRecuperesHref = `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}&focus=creneaux-recuperes`;
   const stats = useMemo(() => {
     const placeholder = (label, note = "Chargement…") => ["—", label, note, "teal", "plus", ""];
@@ -657,8 +666,8 @@ export default function AppDashboard() {
         placeholder("Prises de RDV aujourd'hui"),
         placeholder("RDV d'aujourd'hui"),
         placeholder("Taux de remplissage"),
-        placeholder("Annulations"),
-        placeholder("Créneaux récupérés", "—"),
+        placeholder("Appels d'annulation"),
+        placeholder("Créneaux récupérés (7 j)", "—"),
       ];
     }
     return [
@@ -694,15 +703,15 @@ export default function AppDashboard() {
     ],
     [
       String(cancellationsToday),
-      "Annulations",
-      cancellationsToday > 0 ? "traitées par Clara aujourd'hui" : "aucune aujourd'hui",
+      "Appels d'annulation",
+      cancellationsToday > 0 ? "reçus aujourd'hui" : "aucun aujourd'hui",
       "orange",
       "warn",
       agendaAnnulationsHref,
     ],
     [
       String(recoveredCount),
-      "Créneaux récupérés",
+      "Créneaux récupérés (7 j)",
       recoveredCount > 0 ? "créneaux sauvés par Clara" : "—",
       "purple",
       "check",

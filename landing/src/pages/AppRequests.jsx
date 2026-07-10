@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { fetchTenantRequestsBundleCached } from "../lib/tenantRequestsCache.js";
-import { toUiStatus, classifyRequestType, shouldShowHandoffInRequestInbox, shouldShowCallInRequestInbox, callbackRequestStatusRaw, callbackRequestPriority, callbackRequestSummary, callbackRequestSourceLabel, isLiveTransferHandoff } from "../lib/requestUiStatus.js";
+import { buildTenantRequestRows } from "../lib/requestUiStatus.js";
 
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
 const SYNC_BADGE_WINDOW_MS = 2 * 60 * 1000;
@@ -40,22 +40,6 @@ function isFreshlySynced(updatedAt) {
   return Date.now() - date.getTime() <= SYNC_BADGE_WINDOW_MS;
 }
 
-function formatDate(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "—";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return raw;
-  const now = new Date();
-  const sameDay = date.toDateString() === now.toDateString();
-  if (sameDay) return `Aujourd'hui ${date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) {
-    return `Hier ${date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
-  }
-  return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + " " + date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-}
-
 function getWaitingTime(value) {
   const raw = String(value || "").trim();
   if (!raw) return "—";
@@ -84,14 +68,6 @@ function formatDelayFromMinutes(minutes) {
   const hours = Math.floor(minutes / 60);
   const rem = minutes % 60;
   return `${hours}h${String(rem).padStart(2, "0")}`;
-}
-
-function requestPriority(callOrHandoff) {
-  const p = String(callOrHandoff.priority || callOrHandoff.handoff_priority || "").toLowerCase();
-  const summary = String(callOrHandoff.summary || "").toLowerCase();
-  if (p.includes("urgent") || summary.includes("urgence")) return "Urgence";
-  if (p.includes("low") || p.includes("faible")) return "Faible";
-  return "Standard";
 }
 
 export default function AppRequests() {
@@ -164,95 +140,24 @@ export default function AppRequests() {
   }, []);
 
   const requests = useMemo(() => {
-    const fromCalls = calls
-      .filter((c) => c.followup_state === "callback" || c.status === "TRANSFERRED" || c.reason_category === "urgency")
-      .filter((c) => shouldShowCallInRequestInbox(c, callbacks))
-      .map((c) => {
-        const t = classifyRequestType({ ...c, _source: "call" });
-        const statusRaw = c.followup_state === "processed" ? "processed" : "callback_created";
-        return {
-          id: `call-${c.call_id || c.id}`,
-          patientId: `patient-${String(c.patient_name || "patient").toLowerCase().replace(/\s+/g, "-")}`,
-          patientName: c.patient_name || "Patient",
-          initials: (String(c.patient_name || "PT").split(" ").slice(0, 2).map((x) => x[0] || "").join("").toUpperCase() || "PT"),
-          type: t.type,
-          typeKey: t.typeKey,
-          priority: requestPriority(c),
-          status: toUiStatus(statusRaw),
-          status_raw: statusRaw,
-          summary: c.summary || c.reason_label || "Demande transférée nécessitant une action humaine.",
-          phone: c.customer_number || "—",
-          createdAtLabel: formatDate(c.started_at || c.last_event_at),
-          source: "Via appel",
-          waitingTime: getWaitingTime(c.started_at || c.last_event_at),
-          createdAt: c.started_at || c.last_event_at,
-        };
-      });
-
-    const fromHandoffs = handoffs
-      .filter((h) => shouldShowHandoffInRequestInbox(h, callbacks))
-      .map((h) => {
-        const t = classifyRequestType({ ...h, _source: "handoff" });
-        const rawStatus = String(h.status || "").toLowerCase();
-        return {
-          id: `req-${String(h.id || "").padStart(3, "0")}`,
-          patientId: `patient-${String(h.display_name || "patient").toLowerCase().replace(/\s+/g, "-")}`,
-          patientName: h.display_name || "Patient",
-          initials: (String(h.display_name || "PT").split(" ").slice(0, 2).map((x) => x[0] || "").join("").toUpperCase() || "PT"),
-          type: t.type,
-          typeKey: t.typeKey,
-          priority: requestPriority(h),
-          status: toUiStatus(rawStatus),
-          status_raw: rawStatus,
-          summary: h.summary || h.reason || "Demande transférée nécessitant une action humaine.",
-          phone: h.patient_phone || "—",
-          createdAtLabel: formatDate(h.created_at),
-          source: isLiveTransferHandoff(h) ? "Transfert live" : "Appel vocal",
-          waitingTime: getWaitingTime(h.created_at),
-          createdAt: h.created_at,
-          handoffId: h.id || null,
-        };
-      });
-
-    const fromCallbacks = callbacks.map((c) => {
-      const statusRaw = callbackRequestStatusRaw(c);
-      const isMessage = String(c?.reason || "").toLowerCase() === "message";
+    return buildTenantRequestRows(calls, handoffs, callbacks, requestStatusOverrides).map((item) => {
+      const patientName = String(item.patientName || "Patient");
       return {
-        id: `callback-${c.id}`,
-        patientId: `patient-${String(c.name || "patient").toLowerCase().replace(/\s+/g, "-")}`,
-        patientName: c.name || "Patient",
-        initials: (String(c.name || "PT").split(" ").slice(0, 2).map((x) => x[0] || "").join("").toUpperCase() || "PT"),
-        type: isMessage ? "Message" : "Rappel",
-        typeKey: isMessage ? "message" : "callback",
-        priority: callbackRequestPriority(c),
-        status: toUiStatus(statusRaw),
-        status_raw: statusRaw,
-        summary: callbackRequestSummary(c),
-        phone: c.phone || "—",
-        createdAtLabel: formatDate(c.created_at),
-        source: callbackRequestSourceLabel(c),
-        unknownPatient: Boolean(c.unmatched),
-        waitingTime: getWaitingTime(c.created_at),
-        createdAt: c.created_at,
-        callbackId: c.id,
-        handoffId: c.handoff_id || null,
-        callId: c.call_id || null,
+        ...item,
+        patientId: `patient-${patientName.toLowerCase().replace(/\s+/g, "-")}`,
+        initials: (
+          patientName
+            .split(" ")
+            .slice(0, 2)
+            .map((part) => part[0] || "")
+            .join("")
+            .toUpperCase() || "PT"
+        ),
+        phone: item.phone || "—",
+        waitingTime: getWaitingTime(item.createdAt),
+        syncedRecently: isFreshlySynced(requestStatusOverrides[item.id]?.updated_at),
       };
     });
-
-    return [...fromHandoffs, ...fromCalls, ...fromCallbacks]
-      .map((item) => {
-        const override = requestStatusOverrides[item.id];
-        if (!override?.status_raw) return item;
-        const raw = String(override.status_raw).toLowerCase();
-        return {
-          ...item,
-          status_raw: raw,
-          status: toUiStatus(raw),
-          syncedRecently: isFreshlySynced(override.updated_at),
-        };
-      })
-      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [calls, handoffs, callbacks, requestStatusOverrides]);
 
   const kpis = useMemo(() => {

@@ -22,9 +22,9 @@ describe("agendaAppointmentActions reschedule", () => {
     expect(canOpenReschedulePatientAppt(slot, future, now)).toBe(true);
   });
 
-  it("allows opening modal for UWI slot with event id even without mirror", () => {
+  it("allows reschedule for a Google UWI slot even without local mirror", () => {
     const slot = { source: "UWI", event_id: "google_evt_1" };
-    expect(canRescheduleAgendaSlot(slot)).toBe(false);
+    expect(canRescheduleAgendaSlot(slot)).toBe(true);
     expect(canOpenReschedulePatientAppt(slot, future, now)).toBe(true);
   });
 

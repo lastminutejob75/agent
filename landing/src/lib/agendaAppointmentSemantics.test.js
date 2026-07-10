@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  countRecoveredAgendaSlotsInPeriod,
+  isAgendaSlotCancelled,
   isRecoveredAgendaSlot,
+  isUpcomingAgendaSlot,
   patientAgendaRowStatus,
   semanticLabelForAgendaTone,
   toneForAgendaSlot,
 } from "./agendaAppointmentSemantics.js";
+
+describe("isAgendaSlotCancelled", () => {
+  it("détecte les annulations dans status et booking_status", () => {
+    expect(isAgendaSlotCancelled({ status: "cancelled" })).toBe(true);
+    expect(isAgendaSlotCancelled({ booking_status: "annulé" })).toBe(true);
+    expect(isAgendaSlotCancelled({ status: "confirmed", booking_status: "confirmed" })).toBe(false);
+  });
+});
 
 describe("toneForAgendaSlot", () => {
   it("marque un RDV public pending en orange", () => {
@@ -70,12 +81,35 @@ describe("isRecoveredAgendaSlot", () => {
     expect(isRecoveredAgendaSlot({ slot_label: "Créneau sauvé" })).toBe(true);
     expect(isRecoveredAgendaSlot({ motif: "Consultation" })).toBe(false);
   });
+
+  it("compte uniquement les créneaux actifs de la période affichée", () => {
+    const start = new Date("2026-07-10T00:00:00");
+    const end = new Date("2026-07-17T00:00:00");
+    expect(countRecoveredAgendaSlotsInPeriod([
+      { event_id: "in", start_iso: "2026-07-12T10:00:00", motif: "Créneau récupéré" },
+      { event_id: "in", start_iso: "2026-07-12T10:00:00", motif: "Créneau récupéré" },
+      { event_id: "cancelled", start_iso: "2026-07-13T10:00:00", motif: "Créneau récupéré", status: "cancelled" },
+      { event_id: "out", start_iso: "2026-07-18T10:00:00", motif: "Créneau récupéré" },
+    ], start, end)).toBe(1);
+  });
 });
 
 describe("patientAgendaRowStatus", () => {
   it("retourne À confirmer pour un pending à venir", () => {
     const future = new Date(Date.now() + 3600_000);
     expect(patientAgendaRowStatus({ booking_status: "pending" }, future)).toBe("À confirmer");
+  });
+
+  it("conserve le statut Annulé sans classer le RDV futur comme à venir", () => {
+    const future = new Date(Date.now() + 3600_000);
+    const slot = { status: "cancelled" };
+    expect(patientAgendaRowStatus(slot, future)).toBe("Annulé");
+    expect(isUpcomingAgendaSlot(slot, future)).toBe(false);
+  });
+
+  it("classe un RDV futur actif comme à venir", () => {
+    const future = new Date(Date.now() + 3600_000);
+    expect(isUpcomingAgendaSlot({ status: "confirmed" }, future)).toBe(true);
   });
 });
 

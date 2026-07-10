@@ -90,11 +90,16 @@ def test_book_google_by_iso_mirrors_internal_when_enabled(monkeypatch):
 
     monkeypatch.setattr("backend.calendar_adapter.get_calendar_adapter", lambda session: FakeCalendar())
     monkeypatch.setattr("backend.tenant_config.get_params", lambda tenant_id: {"mirror_google_bookings_to_internal": "true"})
-    monkeypatch.setattr(tools_booking, "_ensure_local_slot_id_from_start_iso", lambda start_iso, tenant_id=1: 55)
+    monkeypatch.setattr(
+        tools_booking,
+        "_ensure_local_slot_id_from_start_iso",
+        lambda start_iso, tenant_id=1, timezone_name="Europe/Paris": 55,
+    )
 
-    def fake_book_local(session, slot_id, source="sqlite"):
+    def fake_book_local(session, slot_id, source="sqlite", google_event_id=None):
         mirrored["slot_id"] = slot_id
         mirrored["source"] = source
+        mirrored["google_event_id"] = google_event_id
         return True
 
     monkeypatch.setattr(tools_booking, "_book_local_by_slot_id", fake_book_local)
@@ -103,7 +108,11 @@ def test_book_google_by_iso_mirrors_internal_when_enabled(monkeypatch):
 
     assert ok is True
     assert reason is None
-    assert mirrored == {"slot_id": 55, "source": "pg" if tools_booking.config.USE_PG_SLOTS else "sqlite"}
+    assert mirrored == {
+        "slot_id": 55,
+        "source": "pg" if tools_booking.config.USE_PG_SLOTS else "sqlite",
+        "google_event_id": "evt_google_123",
+    }
 
 
 def test_book_google_by_iso_mirrors_internal_by_default_for_google_provider(monkeypatch):
@@ -131,11 +140,16 @@ def test_book_google_by_iso_mirrors_internal_by_default_for_google_provider(monk
 
     monkeypatch.setattr("backend.calendar_adapter.get_calendar_adapter", lambda session: FakeCalendar())
     monkeypatch.setattr("backend.tenant_config.get_params", lambda tenant_id: {"calendar_provider": "google", "calendar_id": "cabinet@test"})
-    monkeypatch.setattr(tools_booking, "_ensure_local_slot_id_from_start_iso", lambda start_iso, tenant_id=1: 77)
+    monkeypatch.setattr(
+        tools_booking,
+        "_ensure_local_slot_id_from_start_iso",
+        lambda start_iso, tenant_id=1, timezone_name="Europe/Paris": 77,
+    )
 
-    def fake_book_local(session, slot_id, source="sqlite"):
+    def fake_book_local(session, slot_id, source="sqlite", google_event_id=None):
         mirrored["slot_id"] = slot_id
         mirrored["source"] = source
+        mirrored["google_event_id"] = google_event_id
         return True
 
     monkeypatch.setattr(tools_booking, "_book_local_by_slot_id", fake_book_local)
@@ -144,7 +158,11 @@ def test_book_google_by_iso_mirrors_internal_by_default_for_google_provider(monk
 
     assert ok is True
     assert reason is None
-    assert mirrored == {"slot_id": 77, "source": "pg" if tools_booking.config.USE_PG_SLOTS else "sqlite"}
+    assert mirrored == {
+        "slot_id": 77,
+        "source": "pg" if tools_booking.config.USE_PG_SLOTS else "sqlite",
+        "google_event_id": "evt_google_default",
+    }
 
 
 def test_book_google_by_iso_does_not_mirror_when_disabled(monkeypatch):
@@ -184,3 +202,47 @@ def test_book_google_by_iso_does_not_mirror_when_disabled(monkeypatch):
     assert ok is True
     assert reason is None
     assert called == []
+
+
+def test_book_google_by_iso_does_not_retry_insert_and_passes_tenant_timezone(monkeypatch):
+    calls = []
+
+    class FakeCalendar:
+        def can_propose_slots(self):
+            return True
+
+        def book_appointment(self, **kwargs):
+            calls.append(kwargs)
+            return None
+
+    class Qualif:
+        name = "Alex"
+        contact = "alex@example.com"
+        motif = "Suivi"
+
+    class Session:
+        tenant_id = 19
+        conv_id = "conv-idempotent"
+        booking_code = "ABCD1234"
+        qualif_data = Qualif()
+
+    monkeypatch.setattr("backend.calendar_adapter.get_calendar_adapter", lambda session: FakeCalendar())
+    monkeypatch.setattr(
+        "backend.tenant_config.get_params",
+        lambda tenant_id: {
+            "calendar_provider": "google",
+            "mirror_google_bookings_to_internal": False,
+            "timezone": "America/Montreal",
+        },
+    )
+
+    ok, reason = tools_booking._book_google_by_iso(
+        Session(),
+        "2026-02-05T10:00:00",
+        "2026-02-05T10:15:00",
+    )
+
+    assert (ok, reason) == (False, "slot_taken")
+    assert len(calls) == 1
+    assert calls[0]["timezone_name"] == "America/Montreal"
+    assert calls[0]["booking_code"] == "ABCD1234"

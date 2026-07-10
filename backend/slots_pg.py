@@ -11,6 +11,7 @@ import os
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +65,17 @@ def _connect_pg(url: str, tenant_id: Optional[int] = None, *, row_factory=None):
         yield conn
 
 
-def _start_ts_to_date_time(start_ts: Any) -> tuple[str, str]:
+def _start_ts_to_date_time(start_ts: Any, tz_name: str = "Europe/Paris") -> tuple[str, str]:
     """Convertit start_ts PostgreSQL en (date, time) pour compat SlotDisplay."""
     if start_ts is None:
         return ("", "09:00")
+    if isinstance(start_ts, datetime):
+        try:
+            if start_ts.tzinfo is not None:
+                start_ts = start_ts.astimezone(ZoneInfo(tz_name or "Europe/Paris"))
+            return (start_ts.strftime("%Y-%m-%d"), start_ts.strftime("%H:%M"))
+        except Exception:
+            pass
     s = str(start_ts)
     if " " in s:
         date_part, time_part = s.split(" ", 1)
@@ -80,6 +88,7 @@ def pg_list_free_slots(
     tenant_id: int,
     limit: int = 3,
     pref: Optional[str] = None,
+    tz_name: str = "Europe/Paris",
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Liste les créneaux libres depuis PG.
@@ -89,13 +98,18 @@ def pg_list_free_slots(
     if not url:
         return None
 
+    tz_key = (tz_name or "Europe/Paris").strip() or "Europe/Paris"
     time_cond = ""
+    time_params: List[Any] = []
     if pref == "matin":
-        time_cond = " AND EXTRACT(HOUR FROM start_ts AT TIME ZONE 'Europe/Paris') < 12"
+        time_cond = " AND EXTRACT(HOUR FROM start_ts AT TIME ZONE %s) < 12"
+        time_params.append(tz_key)
     elif pref == "après-midi":
-        time_cond = " AND EXTRACT(HOUR FROM start_ts AT TIME ZONE 'Europe/Paris') >= 14 AND EXTRACT(HOUR FROM start_ts AT TIME ZONE 'Europe/Paris') < 18"
+        time_cond = " AND EXTRACT(HOUR FROM start_ts AT TIME ZONE %s) >= 14 AND EXTRACT(HOUR FROM start_ts AT TIME ZONE %s) < 18"
+        time_params.extend((tz_key, tz_key))
     elif pref == "soir":
-        time_cond = " AND EXTRACT(HOUR FROM start_ts AT TIME ZONE 'Europe/Paris') >= 18"
+        time_cond = " AND EXTRACT(HOUR FROM start_ts AT TIME ZONE %s) >= 18"
+        time_params.append(tz_key)
 
     def _query() -> Optional[List[Dict[str, Any]]]:
         import psycopg
@@ -107,17 +121,17 @@ def pg_list_free_slots(
                     SELECT id, start_ts
                     FROM slots
                     WHERE tenant_id = %s AND is_booked = FALSE
-                      AND start_ts >= (NOW() AT TIME ZONE 'Europe/Paris') + INTERVAL '30 minutes'
+                      AND start_ts >= NOW() + INTERVAL '30 minutes'
                       {time_cond}
                     ORDER BY start_ts ASC
                     LIMIT %s
                     """,
-                    (tenant_id, limit),
+                    (tenant_id, *time_params, limit),
                 )
                 rows = cur.fetchall()
                 out = []
                 for r in rows:
-                    date_s, time_s = _start_ts_to_date_time(r["start_ts"])
+                    date_s, time_s = _start_ts_to_date_time(r["start_ts"], tz_key)
                     out.append({
                         "id": int(r["id"]),
                         "date": date_s,
@@ -141,6 +155,7 @@ def pg_find_slot_id_by_datetime(
     date_str: str,
     time_str: str,
     tenant_id: int = 1,
+    tz_name: str = "Europe/Paris",
 ) -> Optional[int]:
     """
     Trouve l'id d'un slot libre par date et heure (ex: "2026-02-16", "09:00").
@@ -158,11 +173,17 @@ def pg_find_slot_id_by_datetime(
                     """
                     SELECT id FROM slots
                     WHERE tenant_id = %s AND is_booked = FALSE
-                      AND (start_ts AT TIME ZONE 'Europe/Paris')::date = %s::date
-                      AND to_char(start_ts AT TIME ZONE 'Europe/Paris', 'HH24:MI') = %s
+                      AND (start_ts AT TIME ZONE %s)::date = %s::date
+                      AND to_char(start_ts AT TIME ZONE %s, 'HH24:MI') = %s
                     LIMIT 1
                     """,
-                    (tenant_id, date_str[:10], (time_str or "09:00")[:5]),
+                    (
+                        tenant_id,
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                        date_str[:10],
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                        (time_str or "09:00")[:5],
+                    ),
                 )
                 row = cur.fetchone()
                 return int(row[0]) if row else None
@@ -174,6 +195,7 @@ def pg_find_slot_id_by_datetime(
 def pg_list_free_slots_for_date(
     tenant_id: int,
     date_str: str,
+    tz_name: str = "Europe/Paris",
 ) -> Optional[List[Dict[str, Any]]]:
     """Créneaux libres pour une date (déplacement RDV)."""
     url = _pg_url()
@@ -192,15 +214,18 @@ def pg_list_free_slots_for_date(
                     FROM slots
                     WHERE tenant_id = %s
                       AND is_booked = FALSE
-                      AND start_ts::date = %s::date
+                      AND (start_ts AT TIME ZONE %s)::date = %s::date
                     ORDER BY start_ts ASC
                     """,
-                    (tenant_id, date_str[:10]),
+                    (tenant_id, (tz_name or "Europe/Paris").strip() or "Europe/Paris", date_str[:10]),
                 )
                 rows = cur.fetchall()
                 out: List[Dict[str, Any]] = []
                 for row in rows:
-                    date_s, time_s = _start_ts_to_date_time(row.get("start_ts"))
+                    date_s, time_s = _start_ts_to_date_time(
+                        row.get("start_ts"),
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                    )
                     out.append({
                         "id": int(row.get("id") or 0),
                         "date": date_s,
@@ -220,7 +245,11 @@ def pg_list_free_slots_for_date(
         return None
 
 
-def pg_count_free_slots_by_month(tenant_id: int, month: str) -> Optional[Dict[str, int]]:
+def pg_count_free_slots_by_month(
+    tenant_id: int,
+    month: str,
+    tz_name: str = "Europe/Paris",
+) -> Optional[Dict[str, int]]:
     """Nombre de créneaux libres par jour pour un mois (calendrier déplacement)."""
     url = _pg_url()
     if not url:
@@ -236,17 +265,24 @@ def pg_count_free_slots_by_month(tenant_id: int, month: str) -> Optional[Dict[st
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT to_char(start_ts AT TIME ZONE 'Europe/Paris', 'YYYY-MM-DD') AS d,
+                    SELECT to_char(start_ts AT TIME ZONE %s, 'YYYY-MM-DD') AS d,
                            COUNT(*)::int AS cnt
                     FROM slots
                     WHERE tenant_id = %s
                       AND is_booked = FALSE
-                      AND to_char(start_ts AT TIME ZONE 'Europe/Paris', 'YYYY-MM') = %s
-                      AND start_ts::date >= CURRENT_DATE
+                      AND to_char(start_ts AT TIME ZONE %s, 'YYYY-MM') = %s
+                      AND (start_ts AT TIME ZONE %s)::date >= (CURRENT_TIMESTAMP AT TIME ZONE %s)::date
                     GROUP BY 1
                     ORDER BY 1
                     """,
-                    (tenant_id, month_key),
+                    (
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                        tenant_id,
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                        month_key,
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                    ),
                 )
                 return {str(row[0]): int(row[1]) for row in cur.fetchall() if row[0]}
 
@@ -312,6 +348,7 @@ def pg_ensure_slot_id_by_datetime(
     date_str: str,
     time_str: str,
     tenant_id: int = 1,
+    tz_name: str = "Europe/Paris",
 ) -> Optional[int]:
     """
     Garantit l'existence d'un slot pour une date/heure donnée et retourne son id.
@@ -329,12 +366,18 @@ def pg_ensure_slot_id_by_datetime(
                     """
                     SELECT id FROM slots
                     WHERE tenant_id = %s
-                      AND (start_ts AT TIME ZONE 'Europe/Paris')::date = %s::date
-                      AND to_char(start_ts AT TIME ZONE 'Europe/Paris', 'HH24:MI') = %s
+                      AND (start_ts AT TIME ZONE %s)::date = %s::date
+                      AND to_char(start_ts AT TIME ZONE %s, 'HH24:MI') = %s
                     ORDER BY id ASC
                     LIMIT 1
                     """,
-                    (tenant_id, date_str[:10], (time_str or "09:00")[:5]),
+                    (
+                        tenant_id,
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                        date_str[:10],
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                        (time_str or "09:00")[:5],
+                    ),
                 )
                 row = cur.fetchone()
                 if row:
@@ -347,10 +390,14 @@ def pg_ensure_slot_id_by_datetime(
                 cur.execute(
                     """
                     INSERT INTO slots (tenant_id, start_ts)
-                    VALUES (%s, (%s::timestamp AT TIME ZONE 'Europe/Paris'))
+                    VALUES (%s, (%s::timestamp AT TIME ZONE %s))
                     RETURNING id
                     """,
-                    (tenant_id, f"{date_str[:10]}T{(time_str or '09:00')[:5]}:00"),
+                    (
+                        tenant_id,
+                        f"{date_str[:10]}T{(time_str or '09:00')[:5]}:00",
+                        (tz_name or "Europe/Paris").strip() or "Europe/Paris",
+                    ),
                 )
                 row = cur.fetchone()
                 conn.commit()

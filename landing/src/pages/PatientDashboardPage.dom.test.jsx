@@ -27,6 +27,7 @@ vi.mock("../lib/api.js", () => ({
       insights: { tags: [], recent_past_appointments: [] },
     }),
     tenantGetPatientNotes: vi.fn().mockResolvedValue({ items: [] }),
+    tenantGetPatientDocuments: vi.fn().mockResolvedValue({ items: [] }),
     tenantGetHandoffs: vi.fn().mockResolvedValue({ items: [] }),
     tenantGetCalls: vi.fn().mockResolvedValue({ calls: [] }),
     tenantGetPatientAppointments: vi.fn().mockResolvedValue({ slots: [] }),

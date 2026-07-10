@@ -23,6 +23,11 @@ def _auth_override():
     }
 
 
+def _registered_auth_dependency(tenant_module):
+    """FastAPI conserve la fonction originale avant instrumentation timing_log."""
+    return getattr(tenant_module.require_tenant_auth, "__wrapped__", tenant_module.require_tenant_auth)
+
+
 def _handoff_item():
     return {
         "id": 11,
@@ -68,7 +73,7 @@ def test_tenant_agenda_google_mirror_exposes_local_actions(client):
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     start_dt = datetime.utcnow() + timedelta(hours=2)
     end_dt = start_dt + timedelta(minutes=15)
     with patch("backend.routes.tenant._get_tenant_detail", return_value=_google_detail()), patch(
@@ -107,7 +112,7 @@ def test_google_mirror_enabled_by_default_when_provider_google_and_flag_missing(
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     start_dt = datetime.utcnow() + timedelta(hours=2)
     end_dt = start_dt + timedelta(minutes=15)
     detail = _google_detail()
@@ -151,7 +156,7 @@ def test_tenant_agenda_bulk_groups_multiple_days_with_single_google_fetch(client
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     detail = _google_detail()
     detail["params"]["mirror_google_bookings_to_internal"] = False
     first_start = datetime(2026, 3, 12, 9, 0)
@@ -196,7 +201,7 @@ def test_tenant_agenda_create_booking_invalidates_google_events_cache(client):
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     with patch("backend.routes.tenant._get_tenant_detail", return_value=_google_detail()), patch(
         "backend.routes.tenant._google_mirror_enabled",
         return_value=False,
@@ -229,7 +234,7 @@ def test_tenant_agenda_cancel_google_mirror_cancels_both(client):
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     with patch("backend.routes.tenant._get_tenant_detail", return_value=_google_detail()), patch(
         "backend.routes.tenant._get_local_appointment_by_id",
         return_value={"id": 321, "slot_id": 654},
@@ -251,11 +256,65 @@ def test_tenant_agenda_cancel_google_mirror_cancels_both(client):
     cancel_local.assert_called_once_with({"id": 321, "slot_id": 654}, tenant_id=12)
 
 
+def test_tenant_agenda_cancel_reports_partial_and_schedules_reconciliation():
+    from backend.routes import tenant
+
+    body = tenant.TenantAgendaCancelBody(source="UWI", external_event_id="evt_partial")
+    with patch("backend.routes.tenant._get_tenant_detail", return_value=_google_detail()), patch(
+        "backend.routes.tenant._get_local_appointment_by_id",
+        return_value={"id": 321, "slot_id": 654, "name": "Claire", "contact": ""},
+    ), patch("backend.routes.tenant.cancel_booking_sqlite", return_value=False), patch(
+        "backend.routes.tenant.GoogleCalendarService"
+    ) as mock_google_service, patch(
+        "backend.routes.tenant._schedule_agenda_reconciliation",
+        return_value=True,
+    ) as schedule:
+        mock_google_service.return_value.cancel_appointment.return_value = True
+        result = tenant.tenant_agenda_cancel_appointment(
+            "321",
+            body,
+            auth=_auth_override(),
+        )
+
+    assert result["ok"] is False
+    assert result["cancelled"] is True
+    assert result["google_cancelled"] is True
+    assert result["local_cancelled"] is False
+    assert result["partial"] is True
+    assert result["reconciliation"] == "scheduled"
+    schedule.assert_called_once_with(12)
+
+
+def test_tenant_agenda_create_passes_tenant_timezone_to_google():
+    from backend.routes import tenant
+
+    detail = _google_detail()
+    detail["timezone"] = "America/Montreal"
+    detail["params"]["timezone"] = "America/Montreal"
+    body = tenant.TenantAgendaCreateBookingBody(
+        patient_name="Jean Dupont",
+        patient_phone="0612345678",
+        start_iso="2026-06-26T14:45:00",
+        motif="Consultation",
+    )
+    with patch("backend.routes.tenant._get_tenant_detail", return_value=detail), patch(
+        "backend.routes.tenant._google_mirror_enabled",
+        return_value=False,
+    ), patch("backend.routes.tenant.GoogleCalendarService") as mock_google_service, patch(
+        "backend.routes.tenant._send_agenda_confirmation_sms"
+    ):
+        mock_google_service.return_value.book_appointment.return_value = "evt_montreal"
+        result = tenant.tenant_agenda_create_booking(body, auth=_auth_override())
+
+    assert result["event_id"] == "evt_montreal"
+    assert mock_google_service.return_value.book_appointment.call_args.kwargs["timezone_name"] == "America/Montreal"
+
+
 def test_tenant_agenda_reschedule_google_mirror_moves_both(client):
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     old_start = datetime(2026, 3, 12, 9, 0)
     old_end = old_start + timedelta(minutes=15)
     new_start = datetime(2026, 3, 12, 11, 0)
@@ -265,7 +324,7 @@ def test_tenant_agenda_reschedule_google_mirror_moves_both(client):
         return_value={"id": 321, "slot_id": 654},
     ), patch("backend.routes.tenant.get_booking_rules", return_value={"duration_minutes": 15}), patch(
         "backend.routes.tenant._get_slot_window",
-        side_effect=[(old_start, old_end), (new_start, new_end)],
+            side_effect=[(new_start, new_end), (old_start, old_end)],
     ), patch("backend.routes.tenant.reschedule_booking_atomic", return_value=True) as reschedule_local, patch(
         "backend.routes.tenant.GoogleCalendarService"
     ) as mock_google_service:
@@ -293,7 +352,7 @@ def test_tenant_handoffs_list_and_patch(client):
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     item = _handoff_item()
     with patch("backend.routes.tenant.list_handoffs", return_value=[item]) as mock_list, patch(
         "backend.routes.tenant.update_handoff_status",
@@ -320,7 +379,7 @@ def test_tenant_handoffs_support_open_filter_and_notes_only_patch(client):
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     item = _handoff_item()
     with patch("backend.routes.tenant.list_handoffs", return_value=[item]) as mock_list, patch(
         "backend.routes.tenant.update_handoff_status",
@@ -344,7 +403,7 @@ def test_tenant_handoff_patch_notes_only(client):
     from backend.main import app
     from backend.routes import tenant
 
-    app.dependency_overrides[tenant.require_tenant_auth] = _auth_override
+    app.dependency_overrides[_registered_auth_dependency(tenant)] = _auth_override
     item = _handoff_item()
     with patch(
         "backend.routes.tenant.update_handoff_status",

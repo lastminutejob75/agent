@@ -590,6 +590,13 @@ def _tenant_timezone(detail: Optional[dict]) -> str:
     return (params.get("timezone") or (detail or {}).get("timezone") or "Europe/Paris").strip() or "Europe/Paris"
 
 
+def _apply_tenant_pg_context(conn: Any, tenant_id: int) -> None:
+    """Applique le contexte RLS avant toute requête PG tenant-scopée."""
+    from backend.pg_tenant_context import set_tenant_id_on_connection
+
+    set_tenant_id_on_connection(conn, int(tenant_id))
+
+
 def _is_truthy(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -1526,6 +1533,7 @@ def _get_local_appointment_by_id(tenant_id: int, appointment_id: int) -> Optiona
             from psycopg.rows import dict_row
 
             with psycopg.connect(url, row_factory=dict_row) as conn:
+                _apply_tenant_pg_context(conn, tenant_id)
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -1783,6 +1791,7 @@ def _load_local_appointments_for_window(
             from backend.pg_pool import pg_connection_for
 
             with pg_connection_for(url) as conn:
+                _apply_tenant_pg_context(conn, tenant_id)
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -1923,6 +1932,7 @@ def _find_local_appointment_by_google_event_id(
             from psycopg.rows import dict_row
 
             with psycopg.connect(url, row_factory=dict_row) as conn:
+                _apply_tenant_pg_context(conn, tenant_id)
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -2002,6 +2012,7 @@ def _find_local_appointment_for_google_event(
             window_start = start_utc - timedelta(minutes=5)
             window_end = start_utc + timedelta(minutes=5)
             with psycopg.connect(url, row_factory=dict_row) as conn:
+                _apply_tenant_pg_context(conn, tenant_id)
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -2076,6 +2087,7 @@ def _get_slot_window(
             import psycopg
 
             with psycopg.connect(url) as conn:
+                _apply_tenant_pg_context(conn, tenant_id)
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -6481,6 +6493,7 @@ def _local_appointment_rows_for_patient(
             from backend.pg_pool import pg_connection_for
 
             with pg_connection_for(url) as conn:
+                _apply_tenant_pg_context(conn, tenant_id)
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -7268,6 +7281,7 @@ def tenant_agenda_bulk(
                 from psycopg.rows import dict_row
 
                 with psycopg.connect(url, row_factory=dict_row) as conn:
+                    _apply_tenant_pg_context(conn, tenant_id)
                     with conn.cursor() as cur:
                         cur.execute(
                             """
@@ -7462,6 +7476,7 @@ def tenant_agenda_available_slots(
     if not detail:
         raise HTTPException(404, "Tenant not found")
     params = detail.get("params") or {}
+    tz_name = _tenant_timezone(detail)
     if (params.get("calendar_provider") or "").strip() == "google" and not _google_mirror_enabled(detail):
         raise HTTPException(400, "Déplacement automatique indisponible avec Google Calendar")
     if date and time:
@@ -7470,7 +7485,12 @@ def tenant_agenda_available_slots(
             try:
                 from backend.slots_pg import pg_find_slot_id_by_datetime
 
-                slot_id = pg_find_slot_id_by_datetime(date, time, tenant_id=tenant_id)
+                slot_id = pg_find_slot_id_by_datetime(
+                    date,
+                    time,
+                    tenant_id=tenant_id,
+                    tz_name=tz_name,
+                )
             except Exception:
                 slot_id = None
         if slot_id is None:
@@ -7491,7 +7511,11 @@ def tenant_agenda_available_slots(
                 from backend.slots_pg import pg_cleanup_and_ensure_slots, pg_list_free_slots_for_date
 
                 pg_cleanup_and_ensure_slots(tenant_id)
-                raw = pg_list_free_slots_for_date(tenant_id, date[:10])
+                raw = pg_list_free_slots_for_date(
+                    tenant_id,
+                    date[:10],
+                    tz_name=tz_name,
+                )
                 if raw is not None:
                     items = [
                         {
@@ -7539,13 +7563,15 @@ def tenant_agenda_available_dates(
 ):
     """Retourne les dates du mois ayant au moins 1 créneau libre."""
     tenant_id = auth["tenant_id"]
+    detail = _get_tenant_detail(tenant_id)
+    tz_name = _tenant_timezone(detail)
     from backend import config
 
     if config.USE_PG_SLOTS:
         try:
             from backend.slots_pg import pg_count_free_slots_by_month
 
-            dates = pg_count_free_slots_by_month(tenant_id, month)
+            dates = pg_count_free_slots_by_month(tenant_id, month, tz_name=tz_name)
             if dates is not None:
                 return {"dates": dates, "month": month[:7]}
         except Exception as e:
@@ -7710,6 +7736,23 @@ def _agenda_notify_patient(tenant_id: int, phone: str, body: str) -> None:
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _schedule_agenda_reconciliation(tenant_id: int) -> bool:
+    """Lance une réparation ciblée après une mutation Google partielle."""
+    try:
+        from backend.reconcile_calendar import reconcile_tenant
+
+        threading.Thread(
+            target=reconcile_tenant,
+            kwargs={"tenant_id": int(tenant_id), "window_days": 30, "dry_run": False},
+            daemon=True,
+            name=f"reconcile-calendar-tenant-{int(tenant_id)}",
+        ).start()
+        return True
+    except Exception as exc:
+        logger.warning("agenda reconciliation unavailable tenant_id=%s err=%s", tenant_id, exc)
+        return False
+
+
 @router.post("/agenda/bookings")
 def tenant_agenda_create_booking(
     body: TenantAgendaCreateBookingBody,
@@ -7777,6 +7820,7 @@ def tenant_agenda_create_booking(
                 contact_line,
                 motif,
                 booking_origin=BO_PRAT,
+                timezone_name=tz_name,
             )
         except GoogleCalendarPermissionError as e:
             logger.warning("tenant agenda create google permission tenant_id=%s err=%s", tenant_id, e)
@@ -8000,12 +8044,16 @@ def tenant_agenda_cancel_appointment(
             )
             _agenda_notify_patient(tenant_id, _extract_phone_from_contact(local_booking.get("contact") or ""), _msg)
         provider = "google+local" if google_cancelled and local_appt_id is not None else ("google" if google_cancelled else "local")
+        partial = bool(google_cancelled and local_appt_id is not None and not local_cancelled)
+        reconciliation_scheduled = _schedule_agenda_reconciliation(tenant_id) if partial else False
         return {
-            "ok": True,
+            "ok": not partial,
             "cancelled": True,
             "provider": provider,
             "google_cancelled": google_cancelled,
             "local_cancelled": local_cancelled,
+            "partial": partial,
+            "reconciliation": "scheduled" if reconciliation_scheduled else ("required" if partial else None),
         }
 
     try:

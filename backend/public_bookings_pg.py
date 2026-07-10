@@ -66,10 +66,20 @@ def ensure_public_bookings_schema() -> None:
                     "ALTER TABLE public_bookings ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(256)"
                 )
                 cur.execute(
+                    "ALTER TABLE public_bookings ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64)"
+                )
+                cur.execute(
                     """
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_public_bookings_tenant_booking_code
                     ON public_bookings (tenant_id, booking_code)
                     WHERE booking_code IS NOT NULL AND booking_code <> ''
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_public_bookings_idempotency_key
+                    ON public_bookings (idempotency_key)
+                    WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''
                     """
                 )
             conn.commit()
@@ -93,7 +103,9 @@ def insert_public_booking(
     start_iso: Optional[str],
     booking_code: Optional[str] = None,
     google_event_id: Optional[str] = None,
-) -> Dict[str, str]:
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    ensure_public_bookings_schema()
     start_ts = resolve_booking_start_ts(start_iso, slot_label)
     if not start_ts:
         logger.warning(
@@ -103,6 +115,7 @@ def insert_public_booking(
         )
     confirmed_at = datetime.now(timezone.utc) if status == "confirmed" else None
     stored_code = (booking_code or "").strip().upper()[:8] or None
+    idem_key = (idempotency_key or "").strip()[:64] or None
     try:
         with pg_connection() as conn:
             if tenant_id is not None:
@@ -116,9 +129,11 @@ def insert_public_booking(
                     INSERT INTO public_bookings (
                       id, tenant_id, slot_id, slot_label, patient_name, patient_phone,
                       patient_email, motif, source, status, start_iso, created_at, confirmed_at,
-                      booking_code, google_event_id
+                      booking_code, google_event_id, idempotency_key
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id, booking_code
                     """,
                     (
                         booking_id,
@@ -135,16 +150,71 @@ def insert_public_booking(
                         confirmed_at,
                         stored_code,
                         ge,
+                        idem_key,
                     ),
                 )
+                inserted = cur.fetchone()
+                if not inserted:
+                    if not idem_key:
+                        raise RuntimeError("public_booking_conflict")
+                    cur.execute(
+                        """
+                        SELECT id, booking_code, status, slot_label, google_event_id
+                        FROM public_bookings
+                        WHERE idempotency_key = %s
+                        LIMIT 1
+                        """,
+                        (idem_key,),
+                    )
+                    existing = cur.fetchone()
+                    if not existing:
+                        raise RuntimeError("public_booking_conflict")
             conn.commit()
     except Exception as exc:
-        logger.warning("public booking insert skipped: %s", exc)
-        if not stored_code:
-            from backend.booking_code import create_unique_booking_code_for_tenant
+        logger.error("public booking insert failed tenant=%s id=%s: %s", tenant_id, booking_id, exc)
+        raise
+    if inserted:
+        return {
+            "id": str(inserted.get("id") or booking_id),
+            "booking_code": str(inserted.get("booking_code") or stored_code or ""),
+            "created": True,
+            "status": status,
+            "slot_label": slot_label,
+            "google_event_id": ge or "",
+        }
+    return {
+        "id": str(existing.get("id") or ""),
+        "booking_code": str(existing.get("booking_code") or ""),
+        "created": False,
+        "status": str(existing.get("status") or ""),
+        "slot_label": str(existing.get("slot_label") or ""),
+        "google_event_id": str(existing.get("google_event_id") or ""),
+    }
 
-            stored_code = create_unique_booking_code_for_tenant(tenant_id)
-    return {"id": booking_id, "booking_code": stored_code or ""}
+
+def get_public_booking_by_idempotency_key(
+    tenant_id: int,
+    idempotency_key: str,
+) -> Optional[Dict[str, Any]]:
+    """Lecture stricte utilisée par le double-submit du parcours public."""
+    ensure_public_bookings_schema()
+    key = (idempotency_key or "").strip()[:64]
+    if not key:
+        return None
+    with pg_connection() as conn:
+        set_tenant_id_on_connection(conn, int(tenant_id))
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, tenant_id, booking_code, status, slot_label, google_event_id
+                FROM public_bookings
+                WHERE tenant_id = %s AND idempotency_key = %s
+                LIMIT 1
+                """,
+                (int(tenant_id), key),
+            )
+            row = cur.fetchone()
+    return dict(row) if row else None
 
 
 def _contact_phone_matches(stored: Optional[str], provided: Optional[str]) -> bool:

@@ -5,6 +5,7 @@ Vérification du chemin de réservation Google Calendar :
 """
 
 import pytest
+import hashlib
 
 from backend.google_calendar import GoogleCalendarService
 
@@ -46,6 +47,7 @@ def test_book_appointment_calls_api_with_correct_body(monkeypatch):
         patient_name="Jean Dupont",
         patient_contact="jean@example.com",
         motif="Consultation",
+        timezone_name="America/Montreal",
     )
 
     assert event_id == "evt_test_123"
@@ -54,7 +56,57 @@ def test_book_appointment_calls_api_with_correct_body(monkeypatch):
     assert body["summary"] == "RDV - Jean Dupont"
     assert "Jean Dupont" in body["description"] and "jean@example.com" in body["description"] and "Consultation" in body["description"]
     assert body["start"]["dateTime"] == "2026-02-04T14:00:00"
-    assert body["start"]["timeZone"] == "Europe/Paris"
+    assert body["start"]["timeZone"] == "America/Montreal"
     assert body["end"]["dateTime"] == "2026-02-04T14:15:00"
-    assert body["end"]["timeZone"] == "Europe/Paris"
+    assert body["end"]["timeZone"] == "America/Montreal"
     assert insert_calls[0]["calendarId"] == "test@group.calendar.google.com"
+
+
+def test_book_appointment_recovers_event_after_ambiguous_timeout(monkeypatch):
+    contact = "jean@example.com"
+    start = "2026-02-04T14:00:00"
+    key = hashlib.sha256(f"{contact}|{start}".encode("utf-8")).hexdigest()
+    calls = {"insert": 0, "list": 0}
+
+    class FakeEvents:
+        def insert(self, **kwargs):
+            calls["insert"] += 1
+
+            class Request:
+                def execute(self):
+                    raise TimeoutError("read timed out after commit")
+
+            return Request()
+
+        def list(self, **kwargs):
+            calls["list"] += 1
+            assert kwargs["privateExtendedProperty"] == [f"uwiIdempotencyKey={key}"]
+
+            class Request:
+                def execute(self):
+                    return {
+                        "items": [{
+                            "id": "evt_recovered",
+                            "status": "confirmed",
+                            "extendedProperties": {"private": {"uwiIdempotencyKey": key}},
+                        }]
+                    }
+
+            return Request()
+
+    class FakeService:
+        def events(self):
+            return FakeEvents()
+
+    monkeypatch.setattr(GoogleCalendarService, "_build_service", lambda self: FakeService())
+    service = GoogleCalendarService("timeout@test.calendar.google.com")
+    event_id = service.book_appointment(
+        start_time=start,
+        end_time="2026-02-04T14:15:00",
+        patient_name="Jean",
+        patient_contact=contact,
+        motif="Consultation",
+    )
+
+    assert event_id == "evt_recovered"
+    assert calls == {"insert": 1, "list": 1}

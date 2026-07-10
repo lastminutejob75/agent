@@ -4,7 +4,7 @@ export function bookingOriginLabel(code) {
   const c = String(code || "unknown").toLowerCase();
   if (c === "voice") return "Agent vocal";
   if (c === "public_page") return "Page publique";
-  if (c === "praticien") return "Agenda UWi · praticien";
+  if (c === "praticien") return "Praticien";
   if (!code || c === "unknown") return "Non précisée";
   return String(code);
 }
@@ -50,5 +50,7 @@ export function agendaOriginLabel(slot) {
 
   const src = String(slot?.source || "").toUpperCase();
   if (src === "PAGE_PUBLIQUE") return "Page publique";
-  return "Non précisée";
+  if (src === "UWI" || src === "VAPI" || src === "VOICE") return "Agent vocal";
+  if (src === "PRATICIEN" || src === "AGENDA" || src === "CABINET") return "Praticien";
+  return "Praticien";
 }

@@ -26,6 +26,9 @@ import {
   toneForAgendaSlot,
 } from "../lib/agendaAppointmentSemantics.js";
 import {
+  dedupeAgendaSlots,
+} from "../lib/agendaSlotParse.js";
+import {
   agendaCancelPayload,
   agendaReschedulePayload,
   appointmentGoogleEventId,
@@ -140,21 +143,16 @@ function agendaGridHourKey(displayTime) {
   return `${match[1]}:00`;
 }
 
-function agendaSlotMergeKey(slot) {
-  return String(
-    slot?.event_id || slot?.public_booking_id || slot?.appointment_id || `${slot?.start_iso || ""}|${slot?.patient || ""}`,
-  );
-}
-
 function mergeAgendaDayPayload(existing, incoming) {
   if (!incoming) return existing;
   const prevSlots = existing?.slots || [];
   const nextSlots = incoming?.slots || [];
   if (!nextSlots.length) return prevSlots.length ? existing : incoming;
-  const map = new Map();
-  prevSlots.forEach((s) => map.set(agendaSlotMergeKey(s), s));
-  nextSlots.forEach((s) => map.set(agendaSlotMergeKey(s), s));
-  return { ...incoming, date: incoming.date || existing?.date, slots: [...map.values()] };
+  return {
+    ...incoming,
+    date: incoming.date || existing?.date,
+    slots: dedupeAgendaSlots([...prevSlots, ...nextSlots]),
+  };
 }
 
 function mergeAgendaBulkIntoState(prev, dates, bulkRes) {
@@ -374,6 +372,7 @@ function RescheduleCalendar({ onClose, onReschedule, actionLoading }) {
   const [daySlots, setDaySlots] = useState([]);
   const [loadingDay, setLoadingDay] = useState(false);
   const [confirmSlot, setConfirmSlot] = useState(null);
+  const dayLoadSeqRef = useRef(0);
 
   const [datesError, setDatesError] = useState("");
 
@@ -392,13 +391,23 @@ function RescheduleCalendar({ onClose, onReschedule, actionLoading }) {
     return () => { cancelled = true; };
   }, [calMonth]);
 
+  useEffect(() => () => {
+    dayLoadSeqRef.current += 1;
+  }, []);
+
   function loadDay(dateStr) {
+    const loadId = ++dayLoadSeqRef.current;
+    const isCurrentLoad = () => loadId === dayLoadSeqRef.current;
     setPickedDate(dateStr);
     setConfirmSlot(null);
     setLoadingDay(true);
     api.tenantGetAgendaAvailableSlots(`?date=${dateStr}`).then((res) => {
-      setDaySlots(res?.slots || []);
-    }).catch(() => { setDaySlots([]); }).finally(() => setLoadingDay(false));
+      if (isCurrentLoad()) setDaySlots(res?.slots || []);
+    }).catch(() => {
+      if (isCurrentLoad()) setDaySlots([]);
+    }).finally(() => {
+      if (isCurrentLoad()) setLoadingDay(false);
+    });
   }
 
   const year = Number(calMonth.slice(0, 4));
@@ -916,6 +925,9 @@ export default function AppAgenda() {
   const [pendingAgendaAction, setPendingAgendaAction] = useState(
     urlAction === "cancel" || urlAction === "reschedule" ? urlAction : null,
   );
+  const [dashboardFocus, setDashboardFocus] = useState(
+    isSpecialDashboardFocus ? urlFocus : null,
+  );
   const [viewMode, setViewMode] = useState("day");
   const [isMobileAgenda, setIsMobileAgenda] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 760 : false,
@@ -941,26 +953,37 @@ export default function AppAgenda() {
     if (urlAction === "cancel" || urlAction === "reschedule") {
       setPendingAgendaAction(urlAction);
     }
-  }, [urlDate, urlView, urlPhone, urlFocus, urlAction, selectedDate]);
+    if (isSpecialDashboardFocus) setDashboardFocus(urlFocus);
+  }, [urlDate, urlView, urlPhone, urlFocus, urlAction, selectedDate, isSpecialDashboardFocus]);
+
+  const consumeAgendaDeepLink = useCallback(() => {
+    const params = new URLSearchParams(window.location.search);
+    const hadDeepLink = ["focus", "action", "phone"].some((key) => params.has(key));
+    if (!hadDeepLink) return;
+    params.delete("focus");
+    params.delete("action");
+    params.delete("phone");
+    navigate(`/app/agenda${params.size ? `?${params.toString()}` : ""}`, { replace: true });
+  }, [navigate]);
 
   /* Liens depuis le dashboard : focus=annulations → jour ; creneaux-recuperes → semaine */
   useEffect(() => {
-    if (urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes") return;
+    if (dashboardFocus !== "annulations" && dashboardFocus !== "creneaux-recuperes") return;
     const d = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : todayISO();
     setSelectedDate(d);
-    setViewMode(urlFocus === "creneaux-recuperes" ? "week" : "day");
-  }, [urlFocus, urlDate]);
+    setViewMode(dashboardFocus === "creneaux-recuperes" ? "week" : "day");
+  }, [dashboardFocus, urlDate]);
 
   /* Prises de RDV aujourd'hui (dashboard) → semaine + panneau confirmations */
   useEffect(() => {
-    if (urlFocus !== "prises-jour") return;
+    if (dashboardFocus !== "prises-jour") return;
     setViewMode("week");
     const d = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : todayISO();
     setSelectedDate(d);
-  }, [urlFocus, urlDate]);
+  }, [dashboardFocus, urlDate]);
 
   useEffect(() => {
-    if (urlFocus !== "prises-jour") return undefined;
+    if (dashboardFocus !== "prises-jour") return undefined;
     let cancelled = false;
     setBookingsTodayPanel((prev) => ({ ...prev, loading: true }));
     api.tenantBookingsToday()
@@ -975,11 +998,14 @@ export default function AppAgenda() {
       .catch(() => {
         if (cancelled) return;
         setBookingsTodayPanel({ loading: false, date: "", items: [] });
+      })
+      .finally(() => {
+        if (!cancelled) consumeAgendaDeepLink();
       });
     return () => {
       cancelled = true;
     };
-  }, [urlFocus]);
+  }, [dashboardFocus, consumeAgendaDeepLink]);
   const [agendaByDate, setAgendaByDate] = useState({});
   const [horaires, setHoraires] = useState(null);
   const [calendarLoading, setCalendarLoading] = useState(true);
@@ -1483,11 +1509,18 @@ export default function AppAgenda() {
     return h;
   }, [startHour, endHour, apptHourBounds]);
 
+  const visibleAgendaSlots = useMemo(
+    () => dedupeAgendaSlots(visibleDates.flatMap((date) =>
+      (agendaByDate[date]?.slots || []).map((slot) => ({ ...slot, date: slot?.date || date })),
+    )),
+    [agendaByDate, visibleDates],
+  );
+
   const appointments = useMemo(
-    () => visibleDates.flatMap((date) =>
-      (agendaByDate[date]?.slots || [])
+    () => visibleAgendaSlots
         .filter((s) => !isAgendaSlotCancelled(s))
         .map((s, i) => {
+          const date = s.date;
           const appt = {
             ...s,
             id: `${date}-${s.event_id || s.appointment_id || i}`,
@@ -1503,8 +1536,8 @@ export default function AppAgenda() {
               : (s.appointment_id || s.event_id || ""),
           };
           return { ...appt, tone: toneForAgendaSlot(appt) };
-        })),
-    [agendaByDate, visibleDates, duration],
+        }),
+    [visibleAgendaSlots, duration],
   );
 
   const appointmentsByDate = useMemo(() => {
@@ -1531,26 +1564,29 @@ export default function AppAgenda() {
 
   /** RDV au statut annulé dans la période affichée (aligné logique dashboard). */
   const cancelledInVisible = useMemo(
-    () => appointments.filter((a) => String(a?.status || "").toLowerCase().includes("cancel")).length,
-    [appointments],
+    () => visibleAgendaSlots
+      .filter((slot) => viewMode !== "month" || getMonthFromDate(slot.date) === currentMonth)
+      .filter(isAgendaSlotCancelled).length,
+    [visibleAgendaSlots, viewMode, currentMonth],
   );
 
   /** Deep link depuis le dashboard : scroll vers la pastille Annulations / Créneau récupéré */
   useEffect(() => {
     if (calendarLoading) return undefined;
-    if (urlFocus !== "annulations" && urlFocus !== "creneaux-recuperes") return undefined;
-    const id = urlFocus === "annulations" ? "agenda-focus-annulations" : "agenda-focus-creneaux-recuperes";
+    if (dashboardFocus !== "annulations" && dashboardFocus !== "creneaux-recuperes") return undefined;
+    const id = dashboardFocus === "annulations" ? "agenda-focus-annulations" : "agenda-focus-creneaux-recuperes";
     const run = () => {
       document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
     };
     run();
     const raf = window.requestAnimationFrame(run);
     const t = window.setTimeout(run, 160);
+    consumeAgendaDeepLink();
     return () => {
       window.cancelAnimationFrame(raf);
       window.clearTimeout(t);
     };
-  }, [calendarLoading, urlFocus, viewMode, selectedDate, appointments.length]);
+  }, [calendarLoading, dashboardFocus, viewMode, selectedDate, appointments.length, consumeAgendaDeepLink]);
 
   const apptCountByDate = useMemo(() => {
     const map = {};
@@ -1582,8 +1618,9 @@ export default function AppAgenda() {
       }
       setPendingFocusApptId(null);
       setPendingAgendaAction(null);
+      consumeAgendaDeepLink();
     }
-  }, [appointments, pendingFocusApptId, pendingAgendaAction]);
+  }, [appointments, pendingFocusApptId, pendingAgendaAction, consumeAgendaDeepLink]);
 
   useEffect(() => {
     if (!pendingFocusPhone) return;
@@ -1596,11 +1633,18 @@ export default function AppAgenda() {
       setConfirmCancel(false);
       setRescheduleMode(false);
       setPendingFocusPhone(null);
+      consumeAgendaDeepLink();
     }
-  }, [appointments, selectedDate, pendingFocusPhone]);
+  }, [appointments, selectedDate, pendingFocusPhone, consumeAgendaDeepLink]);
 
-  const todayCount = appointments.filter((a) => a.date === selectedDate).length;
-  const uwiCount = appointments.filter((a) => a.isUWI).length;
+  const periodAppointments = useMemo(
+    () => viewMode === "month"
+      ? appointments.filter((a) => getMonthFromDate(a.date) === currentMonth)
+      : appointments,
+    [appointments, currentMonth, viewMode],
+  );
+  const selectedDayCount = appointments.filter((a) => a.date === selectedDate).length;
+  const uwiCount = periodAppointments.filter((a) => a.isUWI).length;
   const isConnected = me?.calendar_provider === "google" && me?.calendar_id;
 
   async function handleCancel() {
@@ -2133,17 +2177,17 @@ export default function AppAgenda() {
   }
 
   const subtitleMap = {
-    day: `${todayCount} RDV aujourd'hui`,
+    day: `${selectedDayCount} RDV · ${formatLongDate(selectedDate)}`,
     week: `${appointments.length} RDV cette semaine`,
-    month: `${appointments.length} RDV ce mois`,
+    month: `${periodAppointments.length} RDV ce mois`,
   };
-  const semanticCounts = useMemo(() => countAgendaTones(appointments), [appointments]);
+  const semanticCounts = useMemo(() => countAgendaTones(periodAppointments), [periodAppointments]);
   const claraManagedCount = useMemo(
-    () => appointments.filter(isClaraManagedSlot).length,
-    [appointments],
+    () => periodAppointments.filter(isClaraManagedSlot).length,
+    [periodAppointments],
   );
   const kpiCards = [
-    { tone: "teal", value: appointments.length, label: "rendez-vous" },
+    { tone: "teal", value: periodAppointments.length, label: "rendez-vous" },
     { tone: "orange", value: semanticCounts.orange, label: "à confirmer" },
     { tone: "purple", value: semanticCounts.purple, label: "créneaux récupérés" },
     { tone: "green", value: claraManagedCount, label: "via Clara" },
@@ -2199,7 +2243,7 @@ export default function AppAgenda() {
     return counts;
   }, [dayAppointments]);
   const dayRange = useMemo(() => {
-    if (!dayAppointments.length) return "Aucun RDV aujourd'hui";
+    if (!dayAppointments.length) return "Aucun RDV ce jour";
     const sorted = [...dayAppointments].sort((a, b) => String(a.displayTime).localeCompare(String(b.displayTime)));
     const first = sorted[0]?.displayTime || "--:--";
     const last = sorted[sorted.length - 1]?.endTime || "--:--";
@@ -2283,7 +2327,7 @@ export default function AppAgenda() {
         <div className="agenda-toolbar-right" style={S.toolbarRight}>
           <span style={S.stats}>
             {subtitleMap[viewMode]}
-            {uwiCount > 0 ? ` · ${uwiCount} via IA` : ""}
+            {uwiCount > 0 ? ` · ${uwiCount} via Clara` : ""}
             {isConnected ? " · 🟢" : ""}
           </span>
           <div className="agenda-view-switch" style={S.viewSwitch}>
@@ -2295,7 +2339,7 @@ export default function AppAgenda() {
           </div>
         </div>
       </div>
-      {urlFocus === "prises-jour" ? (
+      {dashboardFocus === "prises-jour" ? (
         <div
           id="agenda-focus-prises-jour"
           style={{
@@ -2513,9 +2557,9 @@ export default function AppAgenda() {
                 styles={S}
               />
               <div style={S.sideCardPrimary}>
-                <div style={S.sideHeadLabel}>Mois en cours</div>
+                <div style={S.sideHeadLabel}>{formatMonthLabel(selectedDate)}</div>
                 <div className="agenda-side-head-title" style={S.sideHeadTitle}>Synthèse du mois</div>
-                <div style={S.sideHeadSub}>Vue globale des performances et priorités du mois en cours.</div>
+                <div style={S.sideHeadSub}>Vue globale des performances et priorités du mois sélectionné.</div>
                 <div style={S.sideList}>
                   <div style={S.sideRow}><span style={{ ...S.sideDot, background: APPT_TONE.green.border }} /><div><div style={S.sideRowTitle}>{monthCounts.confirmed} confirmés</div><div style={S.sideRowSub}>Patients confirmés sur le mois</div></div></div>
                   <div style={S.sideRow}><span style={{ ...S.sideDot, background: APPT_TONE.orange.border }} /><div><div style={S.sideRowTitle}>{monthCounts.pending} à confirmer</div><div style={S.sideRowSub}>Relances Clara à finaliser</div></div></div>
@@ -2778,11 +2822,11 @@ export default function AppAgenda() {
                 />
               ) : null}
               <div style={S.sideCardPrimary}>
-                <div style={S.sideHeadLabel}>Journée en cours</div>
+                <div style={S.sideHeadLabel}>{formatLongDate(selectedDate)}</div>
                 <div className="agenda-side-head-title" style={S.sideHeadTitle}>Résumé de la journée</div>
-                <div style={S.sideHeadSub}>Synthèse rapide des rendez-vous du jour et priorités à traiter.</div>
+                <div style={S.sideHeadSub}>Synthèse rapide des rendez-vous de la date sélectionnée et priorités à traiter.</div>
                 <div style={S.sideList}>
-                  <div style={S.sideRow}><span style={{ ...S.sideDot, background: APPT_TONE.green.border }} /><div><div style={S.sideRowTitle}>{dayCounts.confirmed} confirmés</div><div style={S.sideRowSub}>Patients confirmés aujourd'hui</div></div></div>
+                  <div style={S.sideRow}><span style={{ ...S.sideDot, background: APPT_TONE.green.border }} /><div><div style={S.sideRowTitle}>{dayCounts.confirmed} confirmés</div><div style={S.sideRowSub}>Patients confirmés à cette date</div></div></div>
                   <div style={S.sideRow}><span style={{ ...S.sideDot, background: APPT_TONE.orange.border }} /><div><div style={S.sideRowTitle}>{dayCounts.pending} à confirmer</div><div style={S.sideRowSub}>Relances Clara en attente</div></div></div>
                   <div style={S.sideRow}><span style={{ ...S.sideDot, background: APPT_TONE.red.border }} /><div><div style={S.sideRowTitle}>{dayCounts.urgent} urgences</div><div style={S.sideRowSub}>Demandes prioritaires du jour</div></div></div>
                 </div>

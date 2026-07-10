@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { agendaSlotMotif, formatAgendaSlotHour, parseAgendaSlotStart } from "../lib/agendaSlotParse.js";
-import { patientAgendaRowStatus } from "../lib/agendaAppointmentSemantics.js";
+import { isUpcomingAgendaSlot, patientAgendaRowStatus } from "../lib/agendaAppointmentSemantics.js";
 import { api } from "../lib/api.js";
 import { buildTenantRequestRows, filterOpenPatientRequests } from "../lib/requestUiStatus.js";
 import { buildAbsenceNoteText, normalizePatientInsightTags } from "../lib/patientInsightTags.js";
@@ -500,7 +500,11 @@ function buildPatientHeroFromProfile(p: Record<string, unknown> | undefined, fal
 const REQUEST_STATUS_OVERRIDES_KEY = "uwi_request_status_overrides";
 
 function isMobilePatientDashboardViewport() {
-  return typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches;
+  return (
+    typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(max-width: 1279px)").matches
+  );
 }
 
 function scrollToPatientDocumentsSection() {
@@ -3033,7 +3037,7 @@ export default function PatientDashboardPage() {
 
   const upcomingPatientAppointments = useMemo(() => {
     const now = Date.now();
-    return patientAgendaParsed.filter((x) => x.start.getTime() >= now);
+    return patientAgendaParsed.filter((x) => isUpcomingAgendaSlot(x.slot, x.start, now));
   }, [patientAgendaParsed]);
   const consultationExistingNextAppointment = useMemo(() => {
     if (!upcomingPatientAppointments.length) return null;

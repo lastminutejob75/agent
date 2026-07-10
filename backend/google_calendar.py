@@ -4,6 +4,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
+import hashlib
 import logging
 from googleapiclient.errors import HttpError
 
@@ -145,6 +146,7 @@ class GoogleCalendarService:
         end_hour: int = 18,
         limit: int = 3,
         buffer_minutes: int = 0,
+        timezone_name: str = "Europe/Paris",
     ) -> List[Dict]:
         """
         Récupère les créneaux libres pour une date donnée.
@@ -169,7 +171,8 @@ class GoogleCalendarService:
         """
         try:
             # Fuseau calendrier (comparaison slot vs event cohérente)
-            tz = ZoneInfo(CALENDAR_TZ) if ZoneInfo else timezone(timedelta(hours=1))
+            tz_key = (timezone_name or CALENDAR_TZ).strip() or CALENDAR_TZ
+            tz = ZoneInfo(tz_key) if ZoneInfo else timezone(timedelta(hours=1))
             day_start = date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
             day_end = date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
             if day_start.tzinfo is None:
@@ -273,6 +276,7 @@ class GoogleCalendarService:
         end_hour: int = 18,
         limit: int = 3,
         buffer_minutes: int = 0,
+        timezone_name: str = "Europe/Paris",
     ) -> List[Dict]:
         """
         Récupère en une seule requête Google le premier créneau libre de plusieurs jours.
@@ -283,7 +287,8 @@ class GoogleCalendarService:
         if not dates or limit <= 0:
             return []
         try:
-            tz = ZoneInfo(CALENDAR_TZ) if ZoneInfo else timezone(timedelta(hours=1))
+            tz_key = (timezone_name or CALENDAR_TZ).strip() or CALENDAR_TZ
+            tz = ZoneInfo(tz_key) if ZoneInfo else timezone(timedelta(hours=1))
             normalized_dates: List[datetime] = []
             for raw_date in dates:
                 current = raw_date
@@ -411,6 +416,8 @@ class GoogleCalendarService:
         patient_contact: str,
         motif: str,
         booking_origin: Optional[str] = None,
+        timezone_name: str = "Europe/Paris",
+        booking_code: Optional[str] = None,
     ) -> Optional[str]:
         """
         Crée un RDV dans Google Calendar.
@@ -425,6 +432,11 @@ class GoogleCalendarService:
         Returns:
             Event ID si succès, None si erreur
         """
+        tz_name = (timezone_name or "Europe/Paris").strip() or "Europe/Paris"
+        code = str(booking_code or "").strip().upper()
+        identity = code or f"{str(patient_contact or '').strip().lower()}|{start_time}"
+        idempotency_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
         # Log pour debug (sans données sensibles)
         cal_mask = (self.calendar_id[:20] + "…") if self.calendar_id and len(self.calendar_id) > 20 else (self.calendar_id or "None")
         logger.info(f"Booking: calendar_id={cal_mask} start={start_time} end={end_time} name={patient_name!r}")
@@ -432,21 +444,28 @@ class GoogleCalendarService:
             from backend.booking_origin import format_google_origin_tag
 
             origin_tag = format_google_origin_tag(booking_origin)
+            booking_line = f"\nBooking-Code: {code}" if code else ""
             event = {
                 'summary': f'RDV - {patient_name}',
                 'description': (
                     f'Patient: {patient_name}\n'
                     f'Contact: {patient_contact}\n'
                     f'Motif: {motif}'
+                    f'{booking_line}'
                     f'{origin_tag}'
                 ),
                 'start': {
                     'dateTime': start_time,
-                    'timeZone': 'Europe/Paris',
+                    'timeZone': tz_name,
                 },
                 'end': {
                     'dateTime': end_time,
-                    'timeZone': 'Europe/Paris',
+                    'timeZone': tz_name,
+                },
+                'extendedProperties': {
+                    'private': {
+                        'uwiIdempotencyKey': idempotency_key,
+                    },
                 },
                 'reminders': {
                     'useDefault': False,
@@ -491,7 +510,61 @@ class GoogleCalendarService:
                     raise GoogleCalendarPermissionError(e)
             else:
                 logger.error("Error booking appointment: %s", e, exc_info=True)
+
+            # Un timeout/5xx peut survenir après que Google a créé l'événement.
+            # Ne jamais réinsérer aveuglément : rechercher d'abord la marque
+            # idempotente privée posée sur l'événement initial.
+            status = getattr(getattr(e, "resp", None), "status", None)
+            ambiguous = not isinstance(e, HttpError) or status in {408, 429} or (status is not None and status >= 500)
+            if ambiguous:
+                recovered = self.find_idempotent_appointment(
+                    idempotency_key,
+                    start_time=start_time,
+                    timezone_name=tz_name,
+                )
+                if recovered:
+                    logger.warning(
+                        "Recovered appointment after ambiguous insert failure: event_id=%s calendar_id=%s",
+                        recovered,
+                        cal_mask,
+                    )
+                    return recovered
             return None
+
+    def find_idempotent_appointment(
+        self,
+        idempotency_key: str,
+        *,
+        start_time: str,
+        timezone_name: str = "Europe/Paris",
+    ) -> Optional[str]:
+        """Retrouve un événement créé malgré une réponse insert ambiguë."""
+        key = str(idempotency_key or "").strip()
+        if not key:
+            return None
+        try:
+            tz_name = (timezone_name or "Europe/Paris").strip() or "Europe/Paris"
+            tz = ZoneInfo(tz_name) if ZoneInfo else timezone.utc
+            start = datetime.fromisoformat(str(start_time).replace("Z", "+00:00"))
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=tz)
+            time_min = (start - timedelta(minutes=2)).isoformat()
+            time_max = (start + timedelta(minutes=2)).isoformat()
+            result = self.service.events().list(
+                calendarId=self.calendar_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                privateExtendedProperty=[f"uwiIdempotencyKey={key}"],
+                fields="items(id,status,start,extendedProperties)",
+            ).execute()
+            for event in result.get("items", []) or []:
+                private = ((event.get("extendedProperties") or {}).get("private") or {})
+                if private.get("uwiIdempotencyKey") == key and event.get("status") != "cancelled":
+                    return str(event.get("id") or "").strip() or None
+        except Exception as lookup_error:
+            logger.warning("Idempotency lookup failed: %s", lookup_error)
+        return None
     
     def list_upcoming_events(self, days: int = 30) -> List[Dict]:
         """

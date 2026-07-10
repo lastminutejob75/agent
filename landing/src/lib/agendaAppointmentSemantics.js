@@ -1,4 +1,4 @@
-import { agendaSlotMotif } from "./agendaSlotParse.js";
+import { agendaSlotMotif, dedupeAgendaSlots, parseAgendaSlotStart } from "./agendaSlotParse.js";
 
 function normalizeSearchText(value) {
   return String(value || "")
@@ -34,6 +34,16 @@ export function isAgendaSlotCancelled(slot) {
   return status.includes("cancel") || status.includes("annul");
 }
 
+/** Un RDV annulé reste historisable, mais ne doit jamais être présenté comme à venir. */
+export function isUpcomingAgendaSlot(slot, start, now = Date.now()) {
+  return (
+    !isAgendaSlotCancelled(slot)
+    && start instanceof Date
+    && !Number.isNaN(start.getTime())
+    && start.getTime() >= now
+  );
+}
+
 export function isAgendaSlotPending(slot) {
   const status = agendaSlotStatusText(slot);
   return status.includes("pending") || status.includes("a confirmer");
@@ -56,6 +66,20 @@ export function isClaraManagedSlot(slot) {
 export function isRecoveredAgendaSlot(slot) {
   const text = agendaSlotSearchText(slot);
   return /(?:creneau\s+)?recuper|repris|sauve|suite\s+annulation/.test(text);
+}
+
+export function countRecoveredAgendaSlotsInPeriod(slots, periodStart, periodEnd) {
+  if (!(periodStart instanceof Date) || !(periodEnd instanceof Date)) return 0;
+  return dedupeAgendaSlots(slots || []).filter((slot) => {
+    const start = parseAgendaSlotStart(slot);
+    return (
+      isRecoveredAgendaSlot(slot)
+      && !isAgendaSlotCancelled(slot)
+      && start
+      && start >= periodStart
+      && start < periodEnd
+    );
+  }).length;
 }
 
 function isUrgentAgendaSlot(slot) {

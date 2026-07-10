@@ -413,9 +413,6 @@ def _reschedule_public_booking(
     from backend.routes.public_pages import PublicBookingRequest, _book_real_slot
 
     old_code = (record.get("booking_code") or "").strip()
-    if not _cancel_all_for_booking(tenant_id, record, old_code, strict_google=True):
-        raise HTTPException(400, "Impossible d'annuler l'ancien rendez-vous.")
-
     try:
         new_code = create_unique_booking_code_for_tenant(tenant_id)
     except Exception as exc:
@@ -442,21 +439,68 @@ def _reschedule_public_booking(
         raise HTTPException(502, "Impossible de reserver le nouveau creneau.")
 
     booking_id = str(uuid.uuid4())
-    insert_public_booking(
-        booking_id=booking_id,
-        tenant_id=tenant_id,
-        slot_id=str(new_slot_id),
-        slot_label=payload.slotLabel,
-        patient_name=payload.patientName,
-        patient_phone=payload.patientPhone,
-        patient_email=payload.patientEmail,
-        motif=payload.motif,
-        source=payload.source,
-        status="confirmed",
-        start_iso=payload.startIso,
-        booking_code=new_code,
-        google_event_id=google_event_id,
-    )
+    new_record = {
+        "source_type": "public_booking",
+        "id": booking_id,
+        "booking_code": new_code,
+        "google_event_id": google_event_id or "",
+    }
+
+    def _compensate_new() -> None:
+        try:
+            if not _cancel_all_for_booking(
+                tenant_id,
+                new_record,
+                new_code,
+                strict_google=False,
+            ):
+                logger.error(
+                    "public reschedule compensation incomplete tenant=%s new_id=%s",
+                    tenant_id,
+                    booking_id,
+                )
+        except Exception as exc:
+            logger.error(
+                "public reschedule compensation failed tenant=%s new_id=%s: %s",
+                tenant_id,
+                booking_id,
+                exc,
+                exc_info=True,
+            )
+
+    # Le nouveau RDV est réservé et persisté avant toute action destructive sur
+    # l'ancien. L'event Google est ainsi rattaché dès l'INSERT.
+    try:
+        insert_public_booking(
+            booking_id=booking_id,
+            tenant_id=tenant_id,
+            slot_id=str(new_slot_id),
+            slot_label=payload.slotLabel,
+            patient_name=payload.patientName,
+            patient_phone=payload.patientPhone,
+            patient_email=payload.patientEmail,
+            motif=payload.motif,
+            source=payload.source,
+            status="confirmed",
+            start_iso=payload.startIso,
+            booking_code=new_code,
+            google_event_id=google_event_id,
+        )
+    except Exception as exc:
+        _compensate_new()
+        raise HTTPException(502, "Impossible d'enregistrer le nouveau rendez-vous.") from exc
+
+    old_cancelled = _cancel_all_for_booking(tenant_id, record, old_code, strict_google=True)
+    if old_cancelled:
+        persisted_old = get_public_booking_by_id(tenant_id, str(record.get("id") or ""))
+        if persisted_old and persisted_old.get("status") != "cancelled":
+            old_cancelled = False
+    if not old_cancelled:
+        _compensate_new()
+        raise HTTPException(
+            502,
+            "Impossible d'annuler l'ancien rendez-vous ; le nouveau créneau a été libéré.",
+        )
     try:
         from backend.public_action_notifications import dispatch_public_reschedule_notifications
 
@@ -564,6 +608,8 @@ def reschedule_appointment(
         raise HTTPException(422, "Creneau invalide.")
     label = (slot_label or record.get("slot_label") or "").strip() or "Nouveau creneau"
     src = (slot_source or "sqlite").strip().lower()
+    if src == "demo":
+        raise HTTPException(422, "Un creneau de demonstration ne peut pas etre reserve.")
 
     if record.get("source_type") == "public_booking":
         if not slug:
