@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import PatientDashboardMobile from "./PatientDashboardMobile";
 
@@ -26,8 +26,15 @@ const baseProps = {
   onCreateConsultation: vi.fn(),
   onAddNote: vi.fn(),
   onAddDocument: vi.fn(),
-  onViewDocuments: vi.fn(),
   onOpenHistoryModal: vi.fn(),
+  onCreateBooking: vi.fn(),
+  createBookingDisabled: false,
+  openRequestCount: 0,
+  activeRequestSummary: "",
+  onViewPriority: vi.fn(),
+  onSendProfessionalSms: vi.fn(),
+  onSendProfessionalEmail: vi.fn(),
+  canSendProfessionalEmail: true,
   tenantPatientPhone: "",
   notify: vi.fn(),
   onQuestionnaireApplied: vi.fn(),
@@ -92,5 +99,20 @@ describe("PatientDashboardMobile", () => {
       />,
     );
     expect(screen.getByText("Tous les rendez-vous")).toBeTruthy();
+  });
+
+  it("surfaces an open patient request before the clinical sections", () => {
+    const onViewPriority = vi.fn();
+    render(
+      <PatientDashboardMobile
+        {...baseProps}
+        openRequestCount={2}
+        activeRequestSummary="Le patient souhaite déplacer son rendez-vous."
+        onViewPriority={onViewPriority}
+      />,
+    );
+    expect(screen.getByText("À faire maintenant")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Voir et traiter" }));
+    expect(onViewPriority).toHaveBeenCalledTimes(1);
   });
 });

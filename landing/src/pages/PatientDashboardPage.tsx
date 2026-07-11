@@ -511,6 +511,10 @@ function scrollToPatientDocumentsSection() {
   document.getElementById("patient-documents")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function scrollToPatientPrioritySection() {
+  document.getElementById("patient-priority")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function readRequestStatusOverrides() {
   if (typeof window === "undefined") return {};
   try {
@@ -823,12 +827,16 @@ function PatientQuickActions({
   onOpenProfile,
   onCreateBooking,
   onCreateConsultation,
+  onAddNote,
+  onAddDocument,
   createBookingDisabled,
 }: {
   notify: (message: string, opts?: { sticky?: boolean }) => void;
   onOpenProfile: () => void;
   onCreateBooking: () => void;
   onCreateConsultation: () => void;
+  onAddNote: () => void;
+  onAddDocument: () => void;
   createBookingDisabled?: boolean;
 }) {
   return (
@@ -854,6 +862,12 @@ function PatientQuickActions({
         }}
       >
         Créer un RDV
+      </HeaderAction>
+      <HeaderAction variant="secondary" compact icon={<span aria-hidden="true">✎</span>} onClick={onAddNote}>
+        Ajouter une note
+      </HeaderAction>
+      <HeaderAction variant="secondary" compact icon={<span aria-hidden="true">▤</span>} onClick={onAddDocument}>
+        Ajouter un document
       </HeaderAction>
       <HeaderAction variant="ghost" compact icon={<HeroSvgIcon name="more" />} onClick={onOpenProfile}>
         Profil
@@ -1199,35 +1213,6 @@ function PatientDocumentsList({
         );
       })}
     </div>
-  );
-}
-
-function PrimaryCTA({
-  children,
-  variant = "dark",
-  onClick,
-}: {
-  children: React.ReactNode;
-  variant?: "dark" | "note" | "document" | "consult";
-  onClick: () => void;
-}) {
-  const variants = {
-    dark: "bg-gradient-to-br from-[#06355D] to-[#002D4E] text-white shadow-[0_12px_30px_rgba(3,49,82,.20)] hover:brightness-110",
-    note: "border border-[#FF9C4B] bg-white text-[#F26C00] hover:bg-[#FFF7EF]",
-    document: "border border-[#6AD58B] bg-white text-[#0EA348] hover:bg-[#F0FFF5]",
-    consult: "border border-[#75D3DF] bg-white text-[#008EA1] hover:bg-[#E9FAFC]",
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      className={cx(
-        "flex h-14 items-center justify-center gap-2.5 rounded-2xl px-4 text-sm font-black transition active:scale-[0.98] sm:h-16 sm:gap-3 sm:px-6 sm:text-base",
-        variants[variant],
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -4409,10 +4394,12 @@ export default function PatientDashboardPage() {
               canSendProfessionalEmail={Boolean(patientEmail && !tenantPatientNotFound)}
               onAddNote={() => setModal("addNote")}
               onAddDocument={() => setModal("addDocument")}
-              onViewDocuments={scrollToPatientDocumentsSection}
               onOpenHistoryModal={() => setModal("history")}
               onCreateBooking={() => setCreatePatientBookingOpen(true)}
               createBookingDisabled={!tenantPatientPhone}
+              openRequestCount={patientOpenRequests.length}
+              activeRequestSummary={activeRequestDetail?.summary || ""}
+              onViewPriority={scrollToPatientPrioritySection}
               tenantPatientPhone={tenantPatientPhone}
               notify={notify}
               summaryRefreshNonce={summaryRefreshNonce}
@@ -4595,6 +4582,8 @@ export default function PatientDashboardPage() {
                   onOpenProfile={() => setModal("profile")}
                   onCreateBooking={() => setCreatePatientBookingOpen(true)}
                   onCreateConsultation={() => openConsultationModal()}
+                  onAddNote={() => setModal("addNote")}
+                  onAddDocument={() => setModal("addDocument")}
                   createBookingDisabled={!tenantPatientPhone}
                 />
 
@@ -4793,24 +4782,15 @@ export default function PatientDashboardPage() {
             </div>
           </section>
 
-          <section className="mt-3.5 overflow-hidden rounded-[24px] border border-[#E2EAF4] bg-white shadow-sm sm:mt-5 sm:rounded-[26px]">
-            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3 sm:gap-4 sm:p-5">
-              <PrimaryCTA variant="note" onClick={() => setModal("addNote")}>✎ Ajouter une note</PrimaryCTA>
-              <PrimaryCTA variant="document" onClick={() => setModal("addDocument")}>▤ Ajouter un document</PrimaryCTA>
-              <PrimaryCTA variant="consult" onClick={() => openConsultationModal()}>
-                🩺 Créer fiche consultation
-              </PrimaryCTA>
-            </div>
-          </section>
           </>
           )}
           </div>
 
           {tenantPatientPhone && !activeRequestDetail && (patientOpenRequests.length > 0 || (requestsLoading && requestIdFromUrl)) ? (
-            <section className="mt-6 rounded-[28px] border border-[#E2EAF4] bg-white p-7 shadow-sm">
+            <section id="patient-priority" className="mt-6 scroll-mt-4 rounded-[28px] border border-[#FFD9B8] bg-[#FFF9F4] p-7 shadow-sm">
               <div className="mb-5 flex items-center justify-between">
                 <h2 className="text-2xl font-black">
-                  <span className="text-[#FF8A00]">ϟ</span> À traiter{" "}
+                  <span className="text-[#FF8A00]">ϟ</span> À faire maintenant{" "}
                   <span className="ml-2 rounded-full bg-[#FFF1E8] px-2 py-1 text-sm text-[#FF6B00]">
                     {patientOpenRequests.length}
                   </span>
@@ -4834,7 +4814,7 @@ export default function PatientDashboardPage() {
           ) : null}
 
           {activeRequestDetail ? (
-            <section className="mt-6 rounded-[28px] border border-[#FFD9B8] bg-[#FFF7F0] p-6 shadow-sm">
+            <section id="patient-priority" className="mt-6 scroll-mt-4 rounded-[28px] border border-[#FFD9B8] bg-[#FFF7F0] p-6 shadow-sm">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-2xl font-black text-[#0A1628]">Demande à traiter</h2>
@@ -4876,9 +4856,25 @@ export default function PatientDashboardPage() {
               </div>
 
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <button type="button" onClick={() => notify("Action: Rappeler le patient")} className="rounded-xl bg-[#009CA4] px-4 py-3 text-sm font-black text-white hover:bg-[#00838A]">Rappeler le patient</button>
-                <button type="button" onClick={() => notify("Action: Assigner au médecin")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Assigner au médecin</button>
-                <button type="button" onClick={() => notify("Action: Planifier un créneau")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Planifier un créneau</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const tel = normalizePhone(displayHero?.phone || tenantPatientPhone);
+                    if (tel) window.location.href = `tel:${tel}`;
+                    else notify("Numéro absent pour rappeler le patient.");
+                  }}
+                  className="rounded-xl bg-[#009CA4] px-4 py-3 text-sm font-black text-white hover:bg-[#00838A]"
+                >
+                  Rappeler le patient
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreatePatientBookingOpen(true)}
+                  disabled={!tenantPatientPhone}
+                  className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC] disabled:opacity-50"
+                >
+                  Planifier un créneau
+                </button>
                 <button type="button" onClick={() => setModal("addNote")} className="rounded-xl border border-[#DDE7F1] bg-white px-4 py-3 text-sm font-black text-[#0A1628] hover:bg-[#F8FAFC]">Ajouter une note</button>
                 <button
                   type="button"
@@ -5056,13 +5052,6 @@ export default function PatientDashboardPage() {
                           className="rounded-xl border border-[#BFD5EC] bg-white px-4 py-2 text-sm font-black text-[#355D87] shadow-sm transition hover:bg-[#EFF6FC] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           Dupliquer la dernière fiche
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openConsultationModal()}
-                          className="rounded-xl border border-[#79CDDB] bg-white px-4 py-2 text-sm font-black text-[#008EA1] shadow-sm transition hover:bg-[#E9FAFC]"
-                        >
-                          + Nouvelle fiche
                         </button>
                       </div>
                     </div>
@@ -5337,43 +5326,49 @@ export default function PatientDashboardPage() {
                   />
                 </section>
 
-                <PatientQuestionnaireCard
-                  phone={tenantPatientPhone}
-                  patientEmail={patientEmail}
-                  profile={patientCabinetRow}
-                  notify={notify}
-                  onApplied={() => {
-                    setPatientFetchNonce((n) => n + 1);
-                    setSummaryRefreshNonce((n) => n + 1);
-                  }}
-                  disabled={tenantPatientNotFound}
-                />
-                <div className="mt-4">
-                  <PatientAdminQuestionnaireCard
-                    phone={tenantPatientPhone}
-                    patientEmail={patientEmail}
-                    notify={notify}
-                    summaryRefreshNonce={summaryRefreshNonce}
-                    onApplied={() => {
-                      setPatientFetchNonce((n) => n + 1);
-                      setSummaryRefreshNonce((n) => n + 1);
-                    }}
-                    disabled={tenantPatientNotFound}
-                  />
-                </div>
-                <div className="mt-4">
-                  <PatientMedicalQuestionnaireCard
-                    phone={tenantPatientPhone}
-                    patientEmail={patientEmail}
-                    notify={notify}
-                    summaryRefreshNonce={summaryRefreshNonce}
-                    onApplied={() => {
-                      setPatientFetchNonce((n) => n + 1);
-                      setSummaryRefreshNonce((n) => n + 1);
-                    }}
-                    disabled={tenantPatientNotFound}
-                  />
-                </div>
+                <details className="overflow-hidden rounded-[28px] border border-[#E2EAF4] bg-white shadow-sm">
+                  <summary className="cursor-pointer px-6 py-5 text-xl font-black text-[#0A1628]">
+                    Formulaires patient
+                    <span className="ml-3 text-sm font-semibold text-[#64748B]">
+                      administratif et médical
+                    </span>
+                  </summary>
+                  <div className="space-y-4 border-t border-[#E2EAF4] bg-[#F8FBFD] p-5">
+                    <PatientQuestionnaireCard
+                      phone={tenantPatientPhone}
+                      patientEmail={patientEmail}
+                      profile={patientCabinetRow}
+                      notify={notify}
+                      onApplied={() => {
+                        setPatientFetchNonce((n) => n + 1);
+                        setSummaryRefreshNonce((n) => n + 1);
+                      }}
+                      disabled={tenantPatientNotFound}
+                    />
+                    <PatientAdminQuestionnaireCard
+                      phone={tenantPatientPhone}
+                      patientEmail={patientEmail}
+                      notify={notify}
+                      summaryRefreshNonce={summaryRefreshNonce}
+                      onApplied={() => {
+                        setPatientFetchNonce((n) => n + 1);
+                        setSummaryRefreshNonce((n) => n + 1);
+                      }}
+                      disabled={tenantPatientNotFound}
+                    />
+                    <PatientMedicalQuestionnaireCard
+                      phone={tenantPatientPhone}
+                      patientEmail={patientEmail}
+                      notify={notify}
+                      summaryRefreshNonce={summaryRefreshNonce}
+                      onApplied={() => {
+                        setPatientFetchNonce((n) => n + 1);
+                        setSummaryRefreshNonce((n) => n + 1);
+                      }}
+                      disabled={tenantPatientNotFound}
+                    />
+                  </div>
+                </details>
               </div>
             </div>
 

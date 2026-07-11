@@ -111,10 +111,12 @@ export type PatientDashboardMobileProps = {
   canSendProfessionalEmail: boolean;
   onAddNote: () => void;
   onAddDocument: () => void;
-  onViewDocuments: () => void;
   onOpenHistoryModal: () => void;
   onCreateBooking: () => void;
   createBookingDisabled?: boolean;
+  openRequestCount: number;
+  activeRequestSummary?: string;
+  onViewPriority: () => void;
   tenantPatientPhone: string;
   notify: (message: string, opts?: { sticky?: boolean }) => void;
   onQuestionnaireApplied: () => void;
@@ -355,7 +357,7 @@ function MobilePatientHeader({
             ♙
           </div>
           <div className="min-w-0">
-            <div className="text-[15px] font-black text-[#0B1628]">Voir la fiche patient détaillée</div>
+            <div className="text-[15px] font-black text-[#0B1628]">Modifier les informations</div>
             <div className="mt-0.5 text-[12px] leading-snug text-[#8492A6]">
               Informations médicales et administratives
             </div>
@@ -394,18 +396,12 @@ function MobileContentActions({
   createBookingDisabled,
   onAddNote,
   onAddDocument,
-  onViewDocuments,
-  documentsCount,
-  documentsLoading,
 }: {
   onCreateConsultation: () => void;
   onCreateBooking: () => void;
   createBookingDisabled?: boolean;
   onAddNote: () => void;
   onAddDocument: () => void;
-  onViewDocuments: () => void;
-  documentsCount: number;
-  documentsLoading: boolean;
 }) {
   return (
     <section className="mb-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -439,12 +435,42 @@ function MobileContentActions({
       >
         ▤ Ajouter un document
       </button>
+    </section>
+  );
+}
+
+function MobilePriorityPanel({
+  count,
+  summary,
+  onOpen,
+}: {
+  count: number;
+  summary?: string;
+  onOpen: () => void;
+}) {
+  if (count <= 0 && !summary) return null;
+  return (
+    <section className="mb-3 rounded-[20px] border border-[#FFD9B8] bg-[#FFF7F0] p-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="m-0 text-[11px] font-black uppercase tracking-[0.12em] text-[#C05B00]">
+            À faire maintenant
+          </p>
+          <h2 className="mt-1 text-lg font-black text-[#0B1628]">
+            {summary ? "Demande patient ouverte" : `${count} demande${count > 1 ? "s" : ""} à traiter`}
+          </h2>
+          {summary ? (
+            <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-[#6B5A4A]">{summary}</p>
+          ) : null}
+        </div>
+        <span className="rounded-full bg-[#FFE7D2] px-2.5 py-1 text-xs font-black text-[#C05B00]">{count || 1}</span>
+      </div>
       <button
         type="button"
-        onClick={onViewDocuments}
-        className="min-h-[50px] rounded-[15px] border border-[#75D3DF] bg-white text-sm font-black text-[#008EA1] shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
+        onClick={onOpen}
+        className="mt-3 w-full rounded-xl bg-[#C05B00] px-4 py-2.5 text-sm font-black text-white"
       >
-        ▤ Consulter les documents{!documentsLoading && documentsCount > 0 ? ` (${documentsCount})` : ""}
+        Voir et traiter
       </button>
     </section>
   );
@@ -456,7 +482,6 @@ function MobileConsultationsDossier({
   saving,
   deletingId,
   lastSavedId,
-  onCreate,
   onDuplicate,
   onEdit,
   onDownloadPdf,
@@ -467,7 +492,6 @@ function MobileConsultationsDossier({
   saving: boolean;
   deletingId: number | null;
   lastSavedId: number | null;
-  onCreate: () => void;
   onDuplicate: () => void;
   onEdit: (item: ConsultationRow) => void;
   onDownloadPdf: (item: ConsultationRow) => void;
@@ -489,19 +513,12 @@ function MobileConsultationsDossier({
         <p className="mt-1 text-[12px] font-semibold leading-snug text-[#61708B]">
           Chaque fiche enregistrée apparaît ici (la plus récente en premier).
         </p>
-        <div className="mt-2.5 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={onCreate}
-            className="min-h-[42px] rounded-xl border border-[#79CDDB] bg-[#E9FAFC] text-[13px] font-black text-[#008EA1]"
-          >
-            + Nouvelle fiche
-          </button>
+        <div className="mt-2.5">
           <button
             type="button"
             onClick={onDuplicate}
             disabled={loading || consultations.length === 0}
-            className="min-h-[42px] rounded-xl border border-[#BFD5EC] bg-white text-[13px] font-black text-[#355D87] disabled:opacity-50"
+            className="min-h-[42px] w-full rounded-xl border border-[#BFD5EC] bg-white text-[13px] font-black text-[#355D87] disabled:opacity-50"
           >
             Dupliquer la dernière
           </button>
@@ -637,7 +654,7 @@ function MobileNextAppointment({
                   </div>
                 </div>
               </div>
-              <div className="mt-3 [&>div]:grid [&>div]:grid-cols-3 [&>div]:gap-1.5 [&>div]:mt-0 [&_button]:min-h-9 [&_button]:w-full [&_button]:rounded-xl [&_button]:px-1.5 [&_button]:py-2 [&_button]:text-[11px] [&_button]:font-black [&_button]:leading-tight">
+              <div className="mt-3 [&>div]:grid [&>div]:grid-cols-2 [&>div]:gap-2 [&>div]:mt-0 [&_button]:min-h-10 [&_button]:w-full [&_button]:rounded-xl [&_button]:px-2 [&_button]:py-2 [&_button]:text-xs [&_button]:font-black [&_button]:leading-tight">
                 {renderApptActions(slot, start)}
               </div>
             </>
@@ -665,6 +682,7 @@ function MobileContextPatient({
   onChangeNoteEditDraft,
   onSaveNoteEdit,
   onToggleNoteExpanded,
+  onOpenHistory,
 }: {
   phone: string;
   patient: Record<string, unknown> | null;
@@ -682,6 +700,7 @@ function MobileContextPatient({
   onChangeNoteEditDraft: (value: string) => void;
   onSaveNoteEdit: (id: number) => void;
   onToggleNoteExpanded: (id: number) => void;
+  onOpenHistory: () => void;
 }) {
   const allergy = String(patient?.allergies || "").trim();
   const treatment = String(patient?.traitements || "").trim();
@@ -793,6 +812,15 @@ function MobileContextPatient({
               </div>
             );
           })}
+          {notes.length > 3 ? (
+            <button
+              type="button"
+              onClick={onOpenHistory}
+              className="w-full rounded-xl border border-white/35 bg-white/10 px-3 py-2.5 text-sm font-black text-white"
+            >
+              Voir les {notes.length - 3} autres notes
+            </button>
+          ) : null}
         </div>
       )}
     </section>
@@ -835,8 +863,9 @@ function MobileAppointmentsTab({
         apptStatusLabel={apptStatusLabel}
         renderApptActions={renderApptActions}
       />
-      <section className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.07)]">
-        <h2 className="mb-2 text-[21px] font-black">Tous les rendez-vous</h2>
+      <details className="mb-3 rounded-[24px] border border-[#E3EAF2] bg-white p-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.07)]">
+        <summary className="cursor-pointer text-[18px] font-black text-[#0B1628]">Tous les rendez-vous</summary>
+        <div className="mt-3">
         {loading ? (
           <p className="text-sm font-semibold text-[#61708B]">Chargement…</p>
         ) : upcoming.length <= 1 && past.length === 0 ? (
@@ -876,7 +905,8 @@ function MobileAppointmentsTab({
             ))}
           </div>
         )}
-      </section>
+        </div>
+      </details>
     </>
   );
 }
@@ -1051,9 +1081,12 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
     canSendProfessionalEmail,
     onAddNote,
     onAddDocument,
-    onViewDocuments,
+    onOpenHistoryModal,
     onCreateBooking,
     createBookingDisabled,
+    openRequestCount,
+    activeRequestSummary,
+    onViewPriority,
     tenantPatientPhone,
     notify,
     onQuestionnaireApplied,
@@ -1131,9 +1164,11 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         createBookingDisabled={createBookingDisabled}
         onAddNote={onAddNote}
         onAddDocument={onAddDocument}
-        onViewDocuments={onViewDocuments}
-        documentsCount={documents.length}
-        documentsLoading={documentsLoading}
+      />
+      <MobilePriorityPanel
+        count={openRequestCount}
+        summary={activeRequestSummary}
+        onOpen={onViewPriority}
       />
       <MobileAppointmentsTab
         upcoming={upcomingAppointments}
@@ -1148,11 +1183,17 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         saving={consultationSaving}
         deletingId={consultationDeletingId}
         lastSavedId={lastSavedConsultationId}
-        onCreate={onCreateConsultation}
         onDuplicate={onDuplicateLatestConsultation}
         onEdit={onEditConsultation}
         onDownloadPdf={onDownloadConsultationPdf}
         onDelete={onDeleteConsultation}
+      />
+      <MobileDocumentsTab
+        documents={documents}
+        loading={documentsLoading}
+        onAddDocument={onAddDocument}
+        onPreviewDocument={onPreviewDocument}
+        formatDocDate={formatDocDate}
       />
       <MobileContextPatient
         phone={tenantPatientPhone}
@@ -1171,43 +1212,41 @@ export default function PatientDashboardMobile(props: PatientDashboardMobileProp
         onChangeNoteEditDraft={onChangeNoteEditDraft}
         onSaveNoteEdit={onSaveNoteEdit}
         onToggleNoteExpanded={onToggleNoteExpanded}
+        onOpenHistory={onOpenHistoryModal}
       />
-      <PatientQuestionnaireCard
-        phone={tenantPatientPhone}
-        patientEmail={patientEmail}
-        profile={patientCabinetRow}
-        notify={notify}
-        onApplied={onQuestionnaireApplied}
-        disabled={tenantPatientNotFound}
-      />
-      <div className="mt-3">
-        <PatientAdminQuestionnaireCard
-          phone={tenantPatientPhone}
-          patientEmail={patientEmail}
-          notify={notify}
-          summaryRefreshNonce={summaryRefreshNonce}
-          onApplied={onQuestionnaireApplied}
-          disabled={tenantPatientNotFound}
-        />
-      </div>
-      <div className="mt-3">
-        <PatientMedicalQuestionnaireCard
-          phone={tenantPatientPhone}
-          patientEmail={patientEmail}
-          notify={notify}
-          summaryRefreshNonce={summaryRefreshNonce}
-          onApplied={onQuestionnaireApplied}
-          disabled={tenantPatientNotFound}
-        />
-      </div>
+      <details className="mb-3 overflow-hidden rounded-[20px] border border-[#E3EAF2] bg-white shadow-[0_8px_20px_rgba(15,23,42,0.05)]">
+        <summary className="cursor-pointer px-4 py-4 text-base font-black text-[#0B1628]">
+          Formulaires patient
+          <span className="ml-2 text-xs font-bold text-[#718096]">administratif et médical</span>
+        </summary>
+        <div className="space-y-3 border-t border-[#E3EAF2] p-3">
+          <PatientQuestionnaireCard
+            phone={tenantPatientPhone}
+            patientEmail={patientEmail}
+            profile={patientCabinetRow}
+            notify={notify}
+            onApplied={onQuestionnaireApplied}
+            disabled={tenantPatientNotFound}
+          />
+          <PatientAdminQuestionnaireCard
+            phone={tenantPatientPhone}
+            patientEmail={patientEmail}
+            notify={notify}
+            summaryRefreshNonce={summaryRefreshNonce}
+            onApplied={onQuestionnaireApplied}
+            disabled={tenantPatientNotFound}
+          />
+          <PatientMedicalQuestionnaireCard
+            phone={tenantPatientPhone}
+            patientEmail={patientEmail}
+            notify={notify}
+            summaryRefreshNonce={summaryRefreshNonce}
+            onApplied={onQuestionnaireApplied}
+            disabled={tenantPatientNotFound}
+          />
+        </div>
+      </details>
       <MobileHistoryTab items={patientHistory} loading={patientHistoryLoading} />
-      <MobileDocumentsTab
-        documents={documents}
-        loading={documentsLoading}
-        onAddDocument={onAddDocument}
-        onPreviewDocument={onPreviewDocument}
-        formatDocDate={formatDocDate}
-      />
     </div>
   );
 }
