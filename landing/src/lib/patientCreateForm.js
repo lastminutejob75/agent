@@ -21,6 +21,46 @@ export const PATIENT_CREATE_FORM_EMPTY = {
   callId: "",
 };
 
+function normalizeSpecialty(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[-_/]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+export function isGeneralPractitionerSpecialty(value) {
+  const specialty = normalizeSpecialty(value);
+  return specialty === "generaliste"
+    || specialty.includes("medecin generaliste")
+    || specialty.includes("medecine generale")
+    || specialty.includes("general practitioner")
+    || specialty.includes("family medicine");
+}
+
+export function generalPractitionerPatientDefaults(profile) {
+  if (!isGeneralPractitionerSpecialty(profile?.specialty)) {
+    return { treatingPhysicianName: "", treatingPhysicianCity: "" };
+  }
+  const practitionerName = String(profile?.practitioner_name || "").trim();
+  return {
+    treatingPhysicianName: practitionerName,
+    treatingPhysicianCity: practitionerName ? String(profile?.city || "").trim() : "",
+  };
+}
+
+export function applyTreatingPhysicianDefaults(form, defaults) {
+  return {
+    ...form,
+    treatingPhysicianName: String(form?.treatingPhysicianName || "").trim()
+      || String(defaults?.treatingPhysicianName || "").trim(),
+    treatingPhysicianCity: String(form?.treatingPhysicianCity || "").trim()
+      || String(defaults?.treatingPhysicianCity || "").trim(),
+  };
+}
+
 export function splitPatientFullName(value) {
   const full = String(value || "").trim();
   if (!full) return { firstName: "", lastName: "" };

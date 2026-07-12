@@ -34,6 +34,11 @@ vi.mock("../lib/api.js", () => ({
     tenantGetPatientHistory: vi.fn().mockResolvedValue({ items: [] }),
     tenantListPatientConsultations: vi.fn().mockResolvedValue({ items: [] }),
     tenantGetCapabilities: vi.fn().mockResolvedValue({ hds_enabled: false }),
+    tenantGetProfile: vi.fn().mockResolvedValue({
+      practitioner_name: "Dr Martin",
+      specialty: "Médecin généraliste",
+      city: "Lyon",
+    }),
   },
 }));
 

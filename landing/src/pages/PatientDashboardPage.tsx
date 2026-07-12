@@ -59,7 +59,9 @@ import {
   invalidateTenantPatientsListCache,
 } from "../lib/patientsListCache.js";
 import {
+  applyTreatingPhysicianDefaults,
   computePatientCreateFieldErrors,
+  generalPractitionerPatientDefaults,
   isPatientCreateSubmitBlocked,
   usePatientCreateDuplicateCheck,
   validatePatientCreateFormForSubmit,
@@ -1350,6 +1352,10 @@ export default function PatientDashboardPage() {
   const [profileBirthDateDraft, setProfileBirthDateDraft] = useState("");
   const [profilePhysicianDraft, setProfilePhysicianDraft] = useState("");
   const [profilePhysicianCityDraft, setProfilePhysicianCityDraft] = useState("");
+  const [practitionerPhysicianDefaults, setPractitionerPhysicianDefaults] = useState({
+    treatingPhysicianName: "",
+    treatingPhysicianCity: "",
+  });
   const [profileMedicalAntecedentsDraft, setProfileMedicalAntecedentsDraft] = useState("");
   const [profileSurgicalAntecedentsDraft, setProfileSurgicalAntecedentsDraft] = useState("");
   const [profileAllergiesDraft, setProfileAllergiesDraft] = useState("");
@@ -1412,6 +1418,24 @@ export default function PatientDashboardPage() {
     email: manualPatientCreateForm.email,
     onConflicts: handleManualPatientCreateConflicts,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    api.tenantGetProfile()
+      .then((profile) => {
+        if (!cancelled) {
+          setPractitionerPhysicianDefaults(generalPractitionerPatientDefaults(profile));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPractitionerPhysicianDefaults({ treatingPhysicianName: "", treatingPhysicianCity: "" });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -3041,8 +3065,14 @@ export default function PatientDashboardPage() {
     if (modal !== "profile") return;
     if (urlPatientHero?.name) setProfileNameDraft(urlPatientHero.name);
     setProfileBirthDateDraft(String(patientCabinetRow?.birth_date || "").trim().slice(0, 10));
-    setProfilePhysicianDraft(String(patientCabinetRow?.treating_physician_name || "").trim());
-    setProfilePhysicianCityDraft(String(patientCabinetRow?.treating_physician_city || "").trim());
+    setProfilePhysicianDraft(
+      String(patientCabinetRow?.treating_physician_name || "").trim()
+      || practitionerPhysicianDefaults.treatingPhysicianName,
+    );
+    setProfilePhysicianCityDraft(
+      String(patientCabinetRow?.treating_physician_city || "").trim()
+      || practitionerPhysicianDefaults.treatingPhysicianCity,
+    );
     setProfileMedicalAntecedentsDraft(String(patientCabinetRow?.antecedents_medicaux || "").trim());
     setProfileSurgicalAntecedentsDraft(String(patientCabinetRow?.antecedents_chirurgicaux || "").trim());
     setProfileAllergiesDraft(String(patientCabinetRow?.allergies || "").trim());
@@ -3051,7 +3081,7 @@ export default function PatientDashboardPage() {
     setProfileAttentionPointsDraft(String(patientCabinetRow?.points_attention || "").trim());
     setProfileMedicalSummaryDraft(String(patientCabinetRow?.synthese_medicale || "").trim());
     setProfileLastConsultationContextDraft(String(patientCabinetRow?.dernier_contexte_consultation || "").trim());
-  }, [modal, urlPatientHero?.name, patientCabinetRow]);
+  }, [modal, urlPatientHero?.name, patientCabinetRow, practitionerPhysicianDefaults]);
 
   const createPatientFichePractice = useCallback(
     async (validatedName: string, opts?: { silent?: boolean }) => {
@@ -3073,6 +3103,8 @@ export default function PatientDashboardPage() {
           patient_phone: tenantPatientPhone,
           validated_name: name,
           raw_name: name,
+          treating_physician_name: practitionerPhysicianDefaults.treatingPhysicianName || undefined,
+          treating_physician_city: practitionerPhysicianDefaults.treatingPhysicianCity || undefined,
         });
         console.info("[fiche.create] success", { ...debugCtx, register_mode: res?.register_mode });
         const profile = res?.patient as Record<string, unknown> | undefined;
@@ -3098,7 +3130,7 @@ export default function PatientDashboardPage() {
         return false;
       }
     },
-    [tenantPatientPhone, loadTenantSidebarPatients],
+    [tenantPatientPhone, loadTenantSidebarPatients, practitionerPhysicianDefaults],
   );
 
   const saveNewPatientBanner = async () => {
@@ -3112,7 +3144,9 @@ export default function PatientDashboardPage() {
   };
 
   const openManualPatientCreateModal = () => {
-    setManualPatientCreateForm(MANUAL_PATIENT_CREATE_EMPTY);
+    setManualPatientCreateForm(
+      applyTreatingPhysicianDefaults(MANUAL_PATIENT_CREATE_EMPTY, practitionerPhysicianDefaults),
+    );
     setManualPatientCreateConflicts([]);
     setModal("createPatientManual");
   };
@@ -4370,7 +4404,19 @@ export default function PatientDashboardPage() {
           {tenantPatientPhone && displayHero ? (
             <PatientDashboardMobile
               displayHero={displayHero}
-              patientCabinetRow={patientCabinetRow}
+              patientCabinetRow={
+                patientCabinetRow
+                  ? {
+                      ...patientCabinetRow,
+                      treating_physician_name:
+                        patientCabinetRow.treating_physician_name
+                        || practitionerPhysicianDefaults.treatingPhysicianName,
+                      treating_physician_city:
+                        patientCabinetRow.treating_physician_city
+                        || practitionerPhysicianDefaults.treatingPhysicianCity,
+                    }
+                  : patientCabinetRow
+              }
               patientEmail={patientEmail}
               tenantPatientNotFound={tenantPatientNotFound}
               onBackToList={goBackToPatientList}
@@ -4764,8 +4810,14 @@ export default function PatientDashboardPage() {
 
                 <PatientProfileHeaderMeta
                   birthDate={patientCabinetRow?.birth_date}
-                  treatingPhysician={patientCabinetRow?.treating_physician_name}
-                  treatingPhysicianCity={patientCabinetRow?.treating_physician_city}
+                  treatingPhysician={
+                    patientCabinetRow?.treating_physician_name
+                    || practitionerPhysicianDefaults.treatingPhysicianName
+                  }
+                  treatingPhysicianCity={
+                    patientCabinetRow?.treating_physician_city
+                    || practitionerPhysicianDefaults.treatingPhysicianCity
+                  }
                   onOpenProfile={() => setModal("profile")}
                 />
 
