@@ -6,7 +6,6 @@ import {
   formatAgendaSlotHour,
   parseAgendaSlotStart,
 } from "../lib/agendaSlotParse.js";
-import { agendaOriginLabel, agendaSlotDurationMinutes } from "../lib/agendaPatientMeta.js";
 import { buildAgendaViewUrl } from "../lib/agendaAppointmentActions.js";
 import { api } from "../lib/api.js";
 import { computeDashboardFillRate, mergeBookedEntryStarts } from "../lib/agendaFillRate.js";
@@ -20,13 +19,10 @@ import { buildRequestItemsFromCallsAndHandoffs, summarizeRequestItems } from "..
 import { fetchTenantCallbacksCached, fetchTenantHandoffsCached } from "../lib/tenantRequestsCache.js";
 import HomeTabsActionsPanel from "../components/home/HomeTabsActionsPanel.jsx";
 import HomeStatsStrip from "../components/home/HomeStatsStrip.jsx";
-import NextAppointmentCard from "../components/home/NextAppointmentCard.jsx";
 import TasksCard from "../components/home/TasksCard.jsx";
-import AgendaTodayCard from "../components/home/AgendaTodayCard.jsx";
+import HomeTodayCard from "../components/home/HomeTodayCard.jsx";
 import DarkSummaryCard from "../components/home/DarkSummaryCard.jsx";
 import InboundModeSwitch from "../components/home/InboundModeSwitch.jsx";
-
-const CLARA_PHOTO = "/images/clara-headset.png";
 
 const C = {
   navy: "#071A33",
@@ -134,19 +130,6 @@ function Btn({ children, icon, variant = "outline", onClick, style }) {
   );
 }
 
-function ClaraPhoto({ size = 98 }) {
-  const [ok, setOk] = useState(true);
-  return (
-    <div style={{ ...S.claraPhoto, width: size, height: size }}>
-      {ok ? (
-        <img src={CLARA_PHOTO} alt="Clara" onError={() => setOk(false)} style={S.claraImg} />
-      ) : (
-        <div style={S.claraFallback}>C</div>
-      )}
-    </div>
-  );
-}
-
 function Card({ title, icon, action, children }) {
   return (
     <section style={S.card}>
@@ -226,8 +209,6 @@ function mapDashboardTeamNotes(items) {
 export default function AppDashboard() {
   const navigate = useNavigate();
   const { me } = useOutletContext() || {};
-  const [tab, setTab] = useState("overview");
-  const [isMobile, setIsMobile] = useState(false);
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -365,14 +346,6 @@ export default function AppDashboard() {
   }, [loadDashboard]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const onResize = () => setIsMobile(window.innerWidth <= 760);
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  useEffect(() => {
     const incoming = mapDashboardTeamNotes(me?.dashboard_team_notes);
     if (incoming.length > 0) {
       setTeamNotes(incoming);
@@ -441,11 +414,7 @@ export default function AppDashboard() {
   const nextLabels = firstDateLabel(nextDate);
   const nextHour = nextDate ? formatAgendaSlotHour(nextDate) : "—";
   const nextReason = agendaSlotMotif(nextSlot?.slot || null) || "Consultation";
-  const nextSource = nextSlot?.slot ? agendaOriginLabel(nextSlot.slot) : "Praticien";
   const nextPatient = String(nextSlot?.slot?.patient || nextSlot?.slot?.patient_name || "Patient").trim() || "Patient";
-  const nextDurationMinutes = nextSlot?.slot
-    ? agendaSlotDurationMinutes(nextSlot.slot, bookingDurationMinutes)
-    : bookingDurationMinutes;
   const canManageNextAppointment = Boolean(nextSlot?.slot && nextSlot?.start);
 
   const openNextAgendaAction = (action) => {
@@ -472,6 +441,20 @@ export default function AppDashboard() {
       action,
       view: "day",
     }));
+  };
+
+  const openNextPatient = () => {
+    const phone = String(
+      nextSlot?.slot?.patient_phone
+      || nextSlot?.slot?.phone
+      || nextSlot?.slot?.caller_number
+      || "",
+    ).trim();
+    if (phone) {
+      navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
+      return;
+    }
+    openNextAgendaAction();
   };
 
   const saveTeamNote = useCallback(async () => {
@@ -591,8 +574,6 @@ export default function AppDashboard() {
     });
   }, [todaySlots, nextSlot, today]);
 
-  const showAgendaTodayCard = agendaForDay.length > 0;
-
   const openHandoffs = useMemo(() => handoffs.filter((h) => {
     const s = String(h?.status || "").toLowerCase();
     return s !== "processed" && s !== "cancelled";
@@ -603,16 +584,40 @@ export default function AppDashboard() {
     return summarizeRequestItems(items);
   }, [calls, handoffs, callbacks]);
 
-  const taskRows = useMemo(() => openHandoffs.slice(0, 2).map((h, idx) => {
+  const taskRows = useMemo(() => openHandoffs.slice(0, 4).map((h, idx) => {
     const title = String(h?.summary || h?.reason || h?.label || `Demande ${idx + 1}`).slice(0, 64);
     const dt = new Date(String(h?.created_at || h?.createdAt || ""));
     const due = Number.isNaN(dt.getTime())
-      ? "Échéance : à définir"
-      : `Échéance : ${dt.toLocaleDateString("fr-FR")}`;
+      ? "Date de réception inconnue"
+      : `Reçue le ${dt.toLocaleDateString("fr-FR")}`;
     const tone = String(h?.priority || "").toLowerCase().includes("urgent") ? "red" : "orange";
     const badge = tone === "red" ? "À faire" : "En attente";
-    return [title || "Demande patient", due, tone, badge];
+    return {
+      id: String(h?.id || h?.handoff_id || `${title}-${idx}`),
+      title: title || "Demande patient",
+      sub: due,
+      tone,
+      badge,
+      handoff: h,
+    };
   }), [openHandoffs]);
+
+  const openTask = (task) => {
+    const handoff = task?.handoff || {};
+    const phone = String(
+      handoff?.patient_phone
+      || handoff?.phone
+      || handoff?.caller_number
+      || handoff?.from_number
+      || "",
+    ).trim();
+    if (phone) {
+      navigate(`/app/patient-dashboard?phone=${encodeURIComponent(phone)}`);
+      return;
+    }
+    const requestId = String(handoff?.id || handoff?.handoff_id || "").trim();
+    navigate(requestId ? `/app/demandes?request=${encodeURIComponent(requestId)}` : "/app/demandes");
+  };
 
   const kpiCurrent = kpis?.current || {};
   const rdvCreatedToday = Number.isFinite(Number(kpis?.today?.bookings))
@@ -663,21 +668,19 @@ export default function AppDashboard() {
     const placeholder = (label, note = "Chargement…") => ["—", label, note, "teal", "plus", ""];
     if (statsLoading) {
       return [
-        placeholder("Prises de RDV aujourd'hui"),
+        placeholder("Demandes ouvertes"),
         placeholder("RDV d'aujourd'hui"),
         placeholder("Taux de remplissage"),
-        placeholder("Appels d'annulation"),
-        placeholder("Créneaux récupérés (7 j)", "—"),
       ];
     }
     return [
     [
-      String(rdvCreatedToday),
-      "Prises de RDV aujourd'hui",
-      rdvCreatedToday > 0 ? "confirmées pour l'avenir" : "aucune confirmation aujourd'hui",
-      "teal",
-      "plus",
-      bookingsTodayHref,
+      String(openHandoffs.length),
+      "Demandes ouvertes",
+      openHandoffs.length > 0 ? "à traiter" : "aucune en attente",
+      openHandoffs.length > 0 ? "orange" : "green",
+      "warn",
+      "/app/demandes",
     ],
     [
       String(rdvPlannedToday),
@@ -701,120 +704,83 @@ export default function AppDashboard() {
       "chart",
       `/app/agenda?view=week&date=${encodeURIComponent(todayISO())}`,
     ],
+  ];
+  }, [
+    statsLoading,
+    openHandoffs.length,
+    rdvPlannedToday,
+    fillRate,
+    fillBooked,
+    fillCapacity,
+    agendaTodayHref,
+  ]);
+
+  const secondaryStats = [
+    [
+      String(rdvCreatedToday),
+      "Prises de RDV",
+      "confirmées aujourd'hui",
+      "teal",
+      "plus",
+      bookingsTodayHref,
+    ],
     [
       String(cancellationsToday),
-      "Appels d'annulation",
-      cancellationsToday > 0 ? "reçus aujourd'hui" : "aucun aujourd'hui",
+      "Annulations",
+      "reçues aujourd'hui",
       "orange",
       "warn",
       agendaAnnulationsHref,
     ],
     [
       String(recoveredCount),
-      "Créneaux récupérés (7 j)",
-      recoveredCount > 0 ? "créneaux sauvés par Clara" : "—",
+      "Créneaux récupérés",
+      "sur les 7 prochains jours",
       "purple",
       "check",
       agendaCreneauxRecuperesHref,
     ],
   ];
-  }, [
-    statsLoading,
-    rdvCreatedToday,
-    rdvPlannedToday,
-    fillRate,
-    fillBooked,
-    fillCapacity,
-    cancellationsToday,
-    recoveredCount,
-    bookingsTodayHref,
-    agendaTodayHref,
-    agendaAnnulationsHref,
-    agendaCreneauxRecuperesHref,
-  ]);
 
-  const priorityItems = [
-    {
-      key: "handoffs",
-      title: "Demandes prioritaires",
-      value: openHandoffs.length,
-      hint: openHandoffs.length > 0 ? "A traiter maintenant" : "Aucune urgence en attente",
-      tone: openHandoffs.length > 0 ? "orange" : "green",
-      action: () => navigate("/app/demandes?status=%C3%80%20traiter&priority=Urgence"),
-    },
-    {
-      key: "next",
-      title: "Prochain RDV",
-      value: nextHour,
-      hint: hasNextAppointment ? `${nextPatient || "Patient"} · ${nextReason || "Consultation"}` : "Aucun rendez-vous planifié",
-      tone: "teal",
-      action: () => navigate("/app/agenda"),
-    },
-    {
-      key: "today",
-      title: "RDV d'aujourd'hui",
-      value: String(rdvPlannedToday),
-      hint: "Prévus dans l'agenda (pas les prises du jour)",
-      tone: "blue",
-      action: () => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`),
-    },
-  ];
-
-  const nextAppointmentCard = (
-    <NextAppointmentCard
-      hasAppointment={hasNextAppointment}
+  const todayCard = (
+    <HomeTodayCard
+      hasNextAppointment={hasNextAppointment}
       nextLabels={nextLabels}
       nextHour={nextHour}
       nextPatient={nextPatient}
       nextReason={nextReason}
-      nextSource={nextSource}
-      nextDurationMinutes={nextDurationMinutes}
-      onMove={canManageNextAppointment ? () => openNextAgendaAction("reschedule") : null}
-      onCancel={canManageNextAppointment ? () => openNextAgendaAction("cancel") : null}
-      onOpenAgenda={() => navigate("/app/agenda")}
+      agendaForDay={agendaForDay}
+      onOpenAgenda={() => navigate(agendaTodayHref)}
+      onOpenNextPatient={hasNextAppointment ? openNextPatient : null}
+      onMoveNext={canManageNextAppointment ? () => openNextAgendaAction("reschedule") : null}
+      onCancelNext={canManageNextAppointment ? () => openNextAgendaAction("cancel") : null}
+      onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
       CardComponent={Card}
       PillComponent={Pill}
-      BtnComponent={Btn}
+      styles={S}
     />
   );
 
   return (
     <div className="uwi-dashboard-page" style={S.page}>
-      {!loading && (connections.vapi || connections.calendar) ? (
+      <HomeHeroSection
+        practitionerName={me?.practitioner_name || me?.display_name || me?.name}
+        styles={S}
+      />
+
+      {!loading && (
+        (Boolean(connections.vapi) && !vapiConnected)
+        || (Boolean(connections.calendar) && !calendarConnected)
+      ) ? (
         <div style={S.connectionStrip}>
-          <span style={{ ...S.connectionPill, ...(vapiConnected ? S.connectionOk : S.connectionWarn) }}>
-            Clara {vapiConnected ? "connectée" : "non configurée"}
-            {connections.vapi?.voice_number ? ` · ${connections.vapi.voice_number}` : ""}
-          </span>
-          <span style={{ ...S.connectionPill, ...(calendarConnected ? S.connectionOk : S.connectionMuted) }}>
-            Agenda {calendarConnected ? "connecté" : "non lié au cabinet"}
-          </span>
-          <span style={{ ...S.connectionPill, ...S.connectionMuted }}>
-            Données en direct · {calls.length} appel{calls.length > 1 ? "s" : ""} (7 j)
-          </span>
+          {!vapiConnected ? <span style={{ ...S.connectionPill, ...S.connectionWarn }}>Clara n&apos;est pas configurée</span> : null}
+          {!calendarConnected ? <span style={{ ...S.connectionPill, ...S.connectionWarn }}>Agenda non connecté</span> : null}
         </div>
       ) : null}
 
       <InboundModeSwitch initialMode={me?.inbound_mode} />
 
-      <HomeHeroSection
-        handledRequestsCount={requestSummary.handled}
-        inProgressRequestsCount={requestSummary.inProgress}
-        assistantName={me?.assistant_name}
-        assistantLive={Boolean(me?.assistant_live)}
-        voiceNumber={me?.voice_number || me?.phone_number}
-        contactEmail={me?.contact_email}
-        onOpenHandledRequests={() => navigate("/app/demandes?status=Trait%C3%A9es")}
-        onOpenReminders={() => navigate("/app/demandes?status=En%20cours")}
-        ClaraPhotoComponent={ClaraPhoto}
-        PillComponent={Pill}
-        IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
-        styles={S}
-      />
-
       <HomeTabsActionsPanel
-        tab={tab}
-        setTab={setTab}
         onPriority={() => navigate("/app/demandes?status=%C3%80%20traiter&priority=Urgence")}
         onDayAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
         onCreateConsultation={() => navigate("/app/patient-dashboard?consultation=1")}
@@ -824,141 +790,60 @@ export default function AppDashboard() {
         BtnComponent={Btn}
       />
 
-      {isMobile ? (
-        <section style={S.mobilePriorityCard}>
-          <p style={S.mobilePriorityTitle}>Priorite du moment</p>
-          <div style={S.mobilePriorityGrid}>
-            {priorityItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={item.action}
-                style={{
-                  ...S.mobilePriorityItem,
-                  borderColor: border[item.tone] || C.border,
-                  background: soft[item.tone] || "#fff",
-                }}
-              >
-                <p style={S.mobilePriorityValue}>{item.value}</p>
-                <p style={S.mobilePriorityLabel}>{item.title}</p>
-                <p style={S.mobilePriorityHint}>{item.hint}</p>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <HomeStatsStrip
-        stats={stats}
-        loading={statsLoading}
-        styles={S}
-        soft={soft}
-        colors={C}
-        IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
-      />
-
-      {isMobile ? <div className="uwi-dashboard-mobile-rdv" style={S.mobileNextRdv}>{nextAppointmentCard}</div> : null}
-
       <div className="uwi-dashboard-grid" style={S.grid}>
-        {isMobile ? (
-          <>
-            <div style={S.colLeft}>
-              <TasksCard
-                taskRows={taskRows}
-                onOpenAll={() => navigate("/app/demandes")}
-                onTaskClick={notify}
-                CardComponent={Card}
-                PillComponent={Pill}
-                IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
-                styles={S}
-                soft={soft}
-                colors={C}
-              />
+        <div style={S.colLeft}>
+          <TasksCard
+            taskRows={taskRows}
+            onOpenAll={() => navigate("/app/demandes")}
+            onTaskClick={openTask}
+            CardComponent={Card}
+            PillComponent={Pill}
+            IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
+            styles={S}
+            soft={soft}
+            colors={C}
+          />
+          {todayCard}
+        </div>
 
-              {showAgendaTodayCard ? (
-                <AgendaTodayCard
-                  agendaForDay={agendaForDay}
-                  onOpenAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
-                  onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
-                  CardComponent={Card}
-                  PillComponent={Pill}
-                  styles={S}
-                />
-              ) : null}
-
-            </div>
-
-            <div style={S.colRight}>
-              <DarkSummaryCard
-                handledTodayCount={requestSummary.handledToday}
-                urgentCount={requestSummary.urgentOpen}
-                avgResponseMinutes={requestSummary.avgResponseMinutes}
-                summaryLoading={loading || statsLoading}
-                teamNotes={teamNotes}
-                teamNoteDraft={teamNoteDraft}
-                onTeamNoteChange={setTeamNoteDraft}
-                onTeamNoteSave={saveTeamNote}
-                onTeamNoteEdit={updateTeamNote}
-                onTeamNoteDelete={deleteTeamNote}
-                teamNoteSaving={teamNoteSaving}
-                teamNoteActionLoadingId={teamNoteActionLoadingId}
-                loading={loading}
-                IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
-                styles={S}
-              />
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={S.colLeft}>
-              {nextAppointmentCard}
-
-              <DarkSummaryCard
-                handledTodayCount={requestSummary.handledToday}
-                urgentCount={requestSummary.urgentOpen}
-                avgResponseMinutes={requestSummary.avgResponseMinutes}
-                summaryLoading={loading || statsLoading}
-                teamNotes={teamNotes}
-                teamNoteDraft={teamNoteDraft}
-                onTeamNoteChange={setTeamNoteDraft}
-                onTeamNoteSave={saveTeamNote}
-                onTeamNoteEdit={updateTeamNote}
-                onTeamNoteDelete={deleteTeamNote}
-                teamNoteSaving={teamNoteSaving}
-                teamNoteActionLoadingId={teamNoteActionLoadingId}
-                loading={loading}
-                IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
-                styles={S}
-              />
-            </div>
-
-            <div style={S.colRight}>
-              <TasksCard
-                taskRows={taskRows}
-                onOpenAll={() => navigate("/app/demandes")}
-                onTaskClick={notify}
-                CardComponent={Card}
-                PillComponent={Pill}
-                IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
-                styles={S}
-                soft={soft}
-                colors={C}
-              />
-
-              {showAgendaTodayCard ? (
-                <AgendaTodayCard
-                  agendaForDay={agendaForDay}
-                  onOpenAgenda={() => navigate(`/app/agenda?view=day&date=${encodeURIComponent(todayISO())}`)}
-                  onRowClick={(row) => openAgendaSlot(row.slot, row.start)}
-                  CardComponent={Card}
-                  PillComponent={Pill}
-                  styles={S}
-                />
-              ) : null}
-
-            </div>
-          </>
-        )}
+        <div style={S.colRight}>
+          <HomeStatsStrip
+            stats={stats}
+            loading={statsLoading}
+            styles={S}
+            soft={soft}
+            colors={C}
+            IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
+          />
+          <DarkSummaryCard
+            handledTodayCount={requestSummary.handledToday}
+            urgentCount={requestSummary.urgentOpen}
+            avgResponseMinutes={requestSummary.avgResponseMinutes}
+            summaryLoading={loading || statsLoading}
+            teamNotes={teamNotes}
+            teamNoteDraft={teamNoteDraft}
+            onTeamNoteChange={setTeamNoteDraft}
+            onTeamNoteSave={saveTeamNote}
+            onTeamNoteEdit={updateTeamNote}
+            onTeamNoteDelete={deleteTeamNote}
+            teamNoteSaving={teamNoteSaving}
+            teamNoteActionLoadingId={teamNoteActionLoadingId}
+            loading={loading}
+            IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
+            styles={S}
+          />
+          <details style={S.activityDetails}>
+            <summary style={S.activitySummary}>Activité secondaire</summary>
+            <HomeStatsStrip
+              stats={secondaryStats}
+              loading={statsLoading}
+              styles={S}
+              soft={soft}
+              colors={C}
+              IconRenderer={(name, size = 18) => <Icon name={name} size={size} />}
+            />
+          </details>
+        </div>
       </div>
 
       {toast ? <div style={S.toast}>✓ {toast}</div> : null}
@@ -974,28 +859,32 @@ const S = {
   connectionOk: { color: C.green, background: soft.green, borderColor: border.green },
   connectionWarn: { color: C.orange, background: soft.orange, borderColor: border.orange },
   connectionMuted: { color: C.muted, background: "#fff", borderColor: C.border },
-  hero: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 24, padding: 24, display: "flex", justifyContent: "space-between", gap: 18, boxShadow: "0 18px 44px rgba(7,26,51,.07)", marginBottom: 14 },
+  hero: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 20, padding: "18px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, boxShadow: "0 12px 32px rgba(7,26,51,.055)", marginBottom: 12 },
   heroLeft: { display: "flex", alignItems: "center", gap: 20 },
   claraPhoto: { borderRadius: 999, border: `3px solid ${C.teal}`, overflow: "hidden", boxShadow: "0 14px 30px rgba(0,156,164,.18)" },
   claraImg: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top" },
   claraFallback: { width: "100%", height: "100%", background: "linear-gradient(135deg,#2EE6D0,#009CA4,#071A33)", color: "#fff", display: "grid", placeItems: "center", fontSize: 34, fontWeight: 800 },
   heroTitleRow: { display: "flex", alignItems: "center", gap: 12, marginBottom: 5 },
-  heroTitle: { margin: 0, fontSize: 28, fontWeight: 800, letterSpacing: "-.03em" },
+  heroEyebrow: { margin: "0 0 3px", color: C.teal, fontSize: 12, fontWeight: 800, textTransform: "capitalize" },
+  heroTitle: { margin: 0, fontSize: 25, fontWeight: 800, letterSpacing: "-.03em" },
   meta: { margin: 0, display: "flex", alignItems: "center", gap: 7, color: C.muted, fontWeight: 600, fontSize: 13 },
+  heroAssistant: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 },
+  heroAssistantMeta: { display: "inline-flex", alignItems: "center", gap: 4, color: C.muted, fontSize: 12, fontWeight: 600 },
   pills: { display: "flex", gap: 9, flexWrap: "wrap", marginTop: 10 },
   heroButtons: { display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end" },
   heroBtnCompact: { height: 40, minHeight: 40, borderRadius: 11, fontSize: 15, padding: "0 16px", lineHeight: 1.1 },
   panel: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 20, boxShadow: "0 10px 28px rgba(7,26,51,.055)", overflow: "hidden", marginBottom: 14 },
+  quickActionsHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px 0", color: C.navy, fontSize: 14 },
   tabs: { display: "flex", height: 52, borderBottom: `1px solid ${C.border}` },
   tab: { padding: "0 30px", border: 0, background: "transparent", fontWeight: 800, cursor: "pointer", color: C.navy, fontFamily: "inherit" },
   tabActive: { color: C.teal, borderBottom: `3px solid ${C.teal}` },
-  quickActions: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 14, padding: 14 },
+  quickActions: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10, padding: 14 },
   panelFooter: { display: "flex", justifyContent: "flex-end", padding: "0 14px 12px" },
   claraSettingsLink: { display: "inline-flex", alignItems: "center", gap: 6, border: 0, background: "transparent", color: C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: "6px 4px" },
   claraSettingsIcon: { fontSize: 13, lineHeight: 1 },
-  statsStrip: { display: "grid", gridTemplateColumns: "190px 1fr", gap: 14, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 20, padding: 14, boxShadow: "0 12px 32px rgba(7,26,51,.06)", marginBottom: 16 },
+  statsStrip: { display: "block", background: "#fff", border: `1px solid ${C.border}`, borderRadius: 20, padding: 12, boxShadow: "0 12px 32px rgba(7,26,51,.06)" },
   statsIntro: { borderRadius: 16, background: "linear-gradient(135deg,#071A33,#063A4A)", color: "#fff", padding: 16, display: "flex", flexDirection: "column", justifyContent: "center", fontWeight: 700 },
-  statsGrid: { display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 },
+  statsGrid: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 },
   statBox: { border: `1px solid ${C.border}`, background: "#fff", borderRadius: 15, padding: 12, textAlign: "left", display: "grid", gap: 3, cursor: "pointer", fontFamily: "inherit" },
   grid: { display: "grid", gridTemplateColumns: "1.15fr .85fr", gap: 18 },
   colLeft: { display: "flex", flexDirection: "column", gap: 16 },
@@ -1078,9 +967,31 @@ const S = {
     cursor: "pointer",
     fontFamily: "inherit",
   },
+  darkActivityDetails: { marginTop: 14, borderTop: "1px solid rgba(255,255,255,.2)", paddingTop: 10 },
+  darkActivitySummary: { cursor: "pointer", color: "#B7F5FF", fontSize: 13, fontWeight: 800 },
+  darkActivityText: { margin: "8px 0 0", color: "rgba(255,255,255,.82)", fontSize: 13, lineHeight: 1.5 },
   darkFooter: { display: "block", marginTop: 12, color: "rgba(255,255,255,.75)" },
   task: { width: "100%", display: "grid", gridTemplateColumns: "42px 1fr auto", alignItems: "center", gap: 12, border: `1px solid ${C.border}`, borderRadius: 14, background: "#fff", padding: 11, marginTop: 10, textAlign: "left", cursor: "pointer", fontFamily: "inherit" },
   agendaRow: { width: "100%", display: "grid", gridTemplateColumns: "64px 1fr auto", alignItems: "center", gap: 12, border: `1px solid ${C.border}`, borderRadius: 14, background: "#fff", padding: 11, marginTop: 9, textAlign: "left", cursor: "pointer", fontFamily: "inherit" },
+  todayNext: { display: "grid", gridTemplateColumns: "92px minmax(0,1fr) auto", gap: 14, alignItems: "center", padding: 14, borderRadius: 16, background: "linear-gradient(135deg,#E8FAFA,#EFF6FF)", border: `1px solid ${border.teal}` },
+  todayNextDate: { height: 70, borderRadius: 14, background: "linear-gradient(135deg,#009CA4,#06455C)", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
+  todayNextContent: { minWidth: 0, display: "flex", flexDirection: "column", gap: 3 },
+  todayEyebrow: { color: C.teal, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em" },
+  todayPatient: { color: C.navy, fontSize: 17, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  todayReason: { color: C.muted, fontSize: 13 },
+  todayNextActions: { display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
+  todayPrimaryBtn: { border: 0, borderRadius: 10, background: C.navy, color: "#fff", padding: "9px 12px", fontWeight: 800, cursor: "pointer" },
+  todaySecondaryBtn: { border: `1px solid ${C.border}`, borderRadius: 10, background: "#fff", color: C.navy, padding: "8px 10px", fontWeight: 700, cursor: "pointer" },
+  todayDivider: { height: 1, background: C.border, margin: "16px 0 12px" },
+  todayListHead: { display: "flex", justifyContent: "space-between", alignItems: "center", color: C.navy, fontSize: 13, marginBottom: 5 },
+  todayList: { display: "grid", gap: 7 },
+  todayRow: { width: "100%", display: "grid", gridTemplateColumns: "54px minmax(0,1fr) auto", alignItems: "center", gap: 10, border: `1px solid ${C.border}`, borderRadius: 12, background: "#fff", padding: 10, textAlign: "left", cursor: "pointer" },
+  todayRowContent: { minWidth: 0, display: "flex", flexDirection: "column", gap: 2 },
+  todayRowPatient: { color: C.navy, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  todayRowReason: { color: C.muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  todayEmpty: { margin: 0, color: C.muted, fontWeight: 600, fontSize: 13 },
+  activityDetails: { border: `1px solid ${C.border}`, borderRadius: 16, background: "#fff", padding: 12 },
+  activitySummary: { cursor: "pointer", color: C.navy, fontSize: 14, fontWeight: 800, padding: 2 },
   input: { width: "100%", height: 50, borderRadius: 12, border: `1px solid ${C.border}`, padding: "0 14px", boxSizing: "border-box", margin: "10px 0", fontFamily: "inherit" },
   toast: { position: "fixed", left: "50%", bottom: 24, transform: "translateX(-50%)", background: C.navy, color: "#fff", padding: "13px 24px", borderRadius: 999, fontWeight: 800, boxShadow: "0 18px 44px rgba(7,26,51,.28)", zIndex: 40 },
   pill: { display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid", borderRadius: 9, padding: "6px 10px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" },
@@ -1127,7 +1038,7 @@ const CSS = `
     .uwi-dashboard-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
   }
   @media (max-width: 1000px) {
-    .uwi-dashboard-quick-actions { grid-template-columns: 1fr !important; }
+    .uwi-dashboard-quick-actions { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
     .uwi-dashboard-stats-strip { grid-template-columns: 1fr !important; }
     .uwi-dashboard-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   }
@@ -1135,11 +1046,20 @@ const CSS = `
     .uwi-dashboard-page { padding: 14px 12px 20px !important; }
     .uwi-dashboard-hero { flex-direction: column !important; align-items: flex-start !important; padding: 16px !important; }
     .uwi-dashboard-hero-left { flex-direction: column !important; align-items: flex-start !important; gap: 14px !important; }
+    .uwi-dashboard-hero > div:last-child { align-items: flex-start !important; }
+    .uwi-dashboard-quick-actions { grid-template-columns: 1fr !important; }
     .uwi-dashboard-hero-buttons { align-items: stretch !important; width: 100% !important; }
     .uwi-dashboard-stats-grid { grid-template-columns: 1fr !important; }
     .uwi-dashboard-mobile-rdv section { padding: 14px !important; }
     .uwi-dashboard-mobile-rdv h3 { font-size: 17px !important; margin-bottom: 8px !important; }
     .uwi-dashboard-tabs { overflow-x: auto !important; }
     .uwi-dashboard-tabs button { flex: 0 0 auto !important; padding: 0 18px !important; }
+    .uwi-dashboard-today-next {
+      grid-template-columns: 72px minmax(0, 1fr) !important;
+    }
+    .uwi-dashboard-today-actions {
+      grid-column: 1 / -1;
+      justify-content: flex-start !important;
+    }
   }
 `;

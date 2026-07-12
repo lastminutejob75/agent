@@ -135,11 +135,9 @@ export default function DarkSummaryCard({
 
   return (
     <section style={S.darkCard}>
-      <h3 style={S.darkTitle}>{IconRenderer("star")}Contexte cabinet</h3>
-      <p style={S.darkAiStatus}>{summaryLoading ? "⏳ Résumé IA en cours…" : "✓ Résumé IA à jour"}</p>
-      <p style={S.darkText}>{summaryText}</p>
+      <h3 style={S.darkTitle}>{IconRenderer("edit")}Transmission équipe</h3>
+      <p style={S.darkText}>Les informations utiles à partager avec le cabinet.</p>
       <div style={S.darkDivider} />
-      <h4 style={S.darkNotesTitle}>✎ Notes de l&apos;équipe</h4>
       {teamNotes.length === 0 ? (
         <p style={S.darkNotesEmpty}>Aucune note cabinet pour le moment.</p>
       ) : (
@@ -246,6 +244,10 @@ export default function DarkSummaryCard({
       >
         {teamNoteSaving ? "Enregistrement..." : "Enregistrer"}
       </button>
+      <details style={S.darkActivityDetails}>
+        <summary style={S.darkActivitySummary}>Résumé d&apos;activité Clara</summary>
+        <p style={S.darkActivityText}>{summaryText}</p>
+      </details>
       <small style={S.darkFooter}>Mis a jour · {loading ? "Synchronisation..." : `Aujourd'hui a ${new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}</small>
     </section>
   );

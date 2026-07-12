@@ -13,10 +13,6 @@ export default function HomeStatsStrip({
   const S = styles;
   return (
     <section className="uwi-dashboard-stats-strip" style={S.statsStrip}>
-      <div style={S.statsIntro}>
-        <span>Activite du jour</span>
-        <b>{loading ? "Mise à jour…" : "Supervision rapide"}</b>
-      </div>
       <div className="uwi-dashboard-stats-grid" style={S.statsGrid}>
         {stats.map(([value, label, note, tone, icon, to]) => (
           <button
