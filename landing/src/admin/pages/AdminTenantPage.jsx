@@ -434,6 +434,9 @@ function TabAccessClient({
   bridgeError,
   openAsClient,
   openClientLogin,
+  provisionAccess,
+  provisionLoading,
+  provisionMessage,
   demoPreview,
 }) {
   return (
@@ -477,7 +480,30 @@ function TabAccessClient({
           >
             Ouvrir login client
           </button>
+          <button
+            type="button"
+            onClick={provisionAccess}
+            disabled={provisionLoading || demoPreview || !contactEmail}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: `1px solid ${C.border}`,
+              background: C.surface,
+              color: C.text,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: provisionLoading || demoPreview || !contactEmail ? "not-allowed" : "pointer",
+              opacity: provisionLoading || demoPreview || !contactEmail ? 0.55 : 1,
+            }}
+          >
+            {provisionLoading ? "Envoi…" : "Provisionner / renvoyer les accès"}
+          </button>
         </div>
+        {provisionMessage ? (
+          <div style={{ marginTop: 10, fontSize: 12, color: C.accent, fontWeight: 600 }}>
+            {provisionMessage}
+          </div>
+        ) : null}
         {demoPreview ? (
           <div style={{ marginTop: 10, fontSize: 12, color: C.muted, fontWeight: 600 }}>
             Désactivé pour les cabinets d’exemple (aucun utilisateur backend).
@@ -1924,6 +1950,8 @@ export default function AdminTenantPage() {
   const [error, setError] = useState(null);
   const [bridgeLoading, setBridgeLoading] = useState(false);
   const [bridgeError, setBridgeError] = useState(null);
+  const [provisionLoading, setProvisionLoading] = useState(false);
+  const [provisionMessage, setProvisionMessage] = useState("");
   const [demoPreview, setDemoPreview] = useState(false);
 
   const load = useCallback(async () => {
@@ -2010,6 +2038,28 @@ export default function AdminTenantPage() {
       setBridgeError(e?.data?.detail ?? e?.message ?? "Erreur lors de l'ouverture du dashboard client");
     } finally {
       setBridgeLoading(false);
+    }
+  };
+
+  const provisionAccess = async () => {
+    if (demoPreview || !contactEmail) return;
+    const confirmed = window.confirm(
+      "Un nouveau mot de passe temporaire sera généré et envoyé au client. Continuer ?",
+    );
+    if (!confirmed) return;
+    setBridgeError(null);
+    setProvisionMessage("");
+    setProvisionLoading(true);
+    try {
+      await adminApi.provisionTenantAccess(tenantId, {
+        email: contactEmail,
+        name: tenant?.name || "",
+      });
+      setProvisionMessage(`Accès envoyé à ${contactEmail}.`);
+    } catch (e) {
+      setBridgeError(e?.data?.detail ?? e?.message ?? "Impossible de provisionner les accès client");
+    } finally {
+      setProvisionLoading(false);
     }
   };
 
@@ -2378,6 +2428,9 @@ export default function AdminTenantPage() {
               bridgeError={bridgeError}
               openAsClient={openAsClient}
               openClientLogin={openClientLogin}
+              provisionAccess={provisionAccess}
+              provisionLoading={provisionLoading}
+              provisionMessage={provisionMessage}
               demoPreview={demoPreview}
             />
           )}

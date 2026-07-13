@@ -14,7 +14,15 @@ from fastapi import APIRouter, HTTPException, Header, Query, Request, Background
 from pydantic import BaseModel, Field
 
 from backend.db import is_valid_patient_phone
-from backend.leads_pg import count_leads_total, get_lead, lead_exists, update_lead, update_lead_callback_booking, upsert_lead
+from backend.leads_pg import (
+    count_leads_total,
+    get_lead,
+    lead_exists,
+    lock_lead_conversion,
+    update_lead,
+    update_lead_callback_booking,
+    upsert_lead,
+)
 from backend.pre_onboarding_rate_limit import check_pre_onboarding_commit
 from backend.services.email_service import send_lead_founder_email, send_lead_prospect_confirmation_email
 
@@ -627,6 +635,26 @@ class CreateAccountBody(BaseModel):
     email: Optional[str] = Field(None, min_length=3, max_length=255)
 
 
+def _create_account_result(tenant_id: int, email: str, *, already_created: bool = False) -> Dict[str, Any]:
+    base_url = (
+        os.getenv("CLIENT_APP_ORIGIN")
+        or os.getenv("VITE_UWI_APP_URL")
+        or os.getenv("VITE_SITE_URL")
+        or "https://www.uwiapp.com"
+    ).strip().rstrip("/")
+    email_query = f"email={email}&" if email else ""
+    return {
+        "ok": True,
+        "tenant_id": int(tenant_id),
+        "login_url": f"{base_url}/login?{email_query}welcome=1",
+        "message": (
+            "Compte déjà créé."
+            if already_created
+            else "Compte créé. Consultez votre email pour le mot de passe temporaire."
+        ),
+    }
+
+
 @router.post("/leads/{lead_id}/create-account")
 async def create_account_from_lead(
     lead_id: str,
@@ -648,139 +676,174 @@ async def create_account_from_lead(
         sync_opening_hours_from_booking_rules,
     )
     from backend.tenant_config import convert_opening_hours_to_booking_rules, derive_horaires_text
-    from backend.tenants_pg import pg_create_tenant, pg_update_tenant_flags, pg_update_tenant_params
+    from backend.tenants_pg import (
+        pg_create_tenant,
+        pg_delete_tenant,
+        pg_update_tenant_flags,
+        pg_update_tenant_params,
+    )
     from backend.services.email_service import send_welcome_email
-
-    if not config.USE_PG_TENANTS:
-        raise HTTPException(503, "Création compte self-serve requiert Postgres (USE_PG_TENANTS)")
 
     from backend.security import assert_lead_access
 
     assert_lead_access(lead_id, _lead_token_from_request(request, x_lead_token, token))
 
-    lead = get_lead(lead_id)
-    if not lead:
-        raise HTTPException(404, "Lead introuvable")
+    if not config.USE_PG_TENANTS:
+        raise HTTPException(503, "Création compte self-serve requiert Postgres (USE_PG_TENANTS)")
 
-    lead_email = (lead.get("email") or "").strip().lower()
-    body_email = (body.email or "").strip().lower() if body.email else ""
-    if lead_email:
-        if body_email and body_email != lead_email:
-            raise HTTPException(400, "L'email doit correspondre à celui du lead")
-        email = lead_email
-    elif body_email:
-        email = body_email
-    else:
-        raise HTTPException(400, "email requis (le lead n'a pas d'email enregistré)")
+    tid: Optional[int] = None
+    try:
+        with lock_lead_conversion(lead_id):
+            # Relire après acquisition du verrou : une autre requête a pu finir sa
+            # conversion pendant l'attente.
+            lead = get_lead(lead_id)
+            if not lead:
+                raise HTTPException(404, "Lead introuvable")
 
-    existing = pg_get_tenant_user_by_email(email)
-    if existing:
-        raise HTTPException(409, "Cet email est déjà rattaché à un compte client")
+            status = (lead.get("status") or "").strip().lower()
+            existing_tenant_id = lead.get("tenant_id")
+            if status == "converted" and existing_tenant_id is not None:
+                try:
+                    existing_tid = int(existing_tenant_id)
+                except (TypeError, ValueError):
+                    raise HTTPException(409, "État de conversion du lead incohérent")
+                if existing_tid <= 0:
+                    raise HTTPException(409, "État de conversion du lead incohérent")
+                existing_email = (lead.get("email") or body.email or "").strip().lower()
+                return _create_account_result(existing_tid, existing_email, already_created=True)
+            if status == "converted" or existing_tenant_id is not None:
+                raise HTTPException(409, "État de conversion du lead incohérent")
 
-    cabinet_name = (email.split("@")[0] or "Cabinet").strip()[:120]
-    sector = (lead.get("medical_specialty") or "medecin_generaliste").strip()
-    assistant_name = (lead.get("assistant_name") or "sophie").strip().lower()
+            lead_email = (lead.get("email") or "").strip().lower()
+            body_email = (body.email or "").strip().lower() if body.email else ""
+            if lead_email:
+                if body_email and body_email != lead_email:
+                    raise HTTPException(400, "L'email doit correspondre à celui du lead")
+                email = lead_email
+            elif body_email:
+                email = body_email
+            else:
+                raise HTTPException(400, "email requis (le lead n'a pas d'email enregistré)")
 
-    import secrets
-    temp_password = secrets.token_urlsafe(10)
+            existing = pg_get_tenant_user_by_email(email)
+            if existing:
+                raise HTTPException(409, "Cet email est déjà rattaché à un compte client")
 
-    tid = pg_create_tenant(
-        name=cabinet_name,
-        contact_email=email,
-        calendar_provider="none",
-        calendar_id="",
-        timezone="Europe/Paris",
-        status="active",
-        plan_key="growth",
-    )
-    if not tid:
+            cabinet_name = (email.split("@")[0] or "Cabinet").strip()[:120]
+            sector = (lead.get("medical_specialty") or "medecin_generaliste").strip()
+            assistant_name = (lead.get("assistant_name") or "sophie").strip().lower()
+
+            import secrets
+            temp_password = secrets.token_urlsafe(10)
+
+            tid = pg_create_tenant(
+                name=cabinet_name,
+                contact_email=email,
+                calendar_provider="none",
+                calendar_id="",
+                timezone="Europe/Paris",
+                status="active",
+                plan_key="growth",
+            )
+            if not tid:
+                raise HTTPException(500, "Impossible de créer le compte")
+
+            if not pg_create_tenant_user(
+                tid,
+                email,
+                role="owner",
+                password=temp_password,
+                must_change_password=True,
+            ):
+                raise HTTPException(500, "Impossible de créer l'utilisateur")
+
+            flags = {
+                "ENABLE_BOOKING": True,
+                "ENABLE_TRANSFER": True,
+                "ENABLE_FAQ": True,
+                "ENABLE_ANTI_LOOP": True,
+            }
+            if not pg_update_tenant_flags(tid, flags):
+                raise HTTPException(500, "Erreur configuration")
+
+            params_payload = {
+                "assistant_name": assistant_name,
+                "business_name": cabinet_name,
+                "sector": sector,
+                "contact_email": email,
+                "specialty_label": (lead.get("medical_specialty_label") or "").strip(),
+                "city": (lead.get("city") or "").strip(),
+                "phone_number": (lead.get("callback_phone") or "").strip(),
+                "client_onboarding_completed": False,
+                "lead_id": lead_id,
+                "lead_source": lead.get("source") or "landing_cta",
+            }
+            if not pg_update_tenant_params(tid, params_payload):
+                raise HTTPException(500, "Erreur paramètres")
+
+            booking_rules_final: Dict[str, Any] = {}
+            opening_hours = lead.get("opening_hours")
+            if isinstance(opening_hours, dict):
+                booking_rules_final = convert_opening_hours_to_booking_rules(opening_hours)
+                booking_rules_final["horaires"] = derive_horaires_text(booking_rules_final)
+                if not pg_update_tenant_params(tid, booking_rules_final):
+                    raise HTTPException(500, "Erreur configuration des horaires")
+
+            sync_normalized_from_params(tid, params_payload)
+            if booking_rules_final:
+                sync_opening_hours_from_booking_rules(tid, booking_rules_final)
+
+            existing_log = lead.get("notes_log")
+            parsed = []
+            if isinstance(existing_log, str) and existing_log.strip():
+                parsed = json.loads(existing_log)
+            elif isinstance(existing_log, list):
+                parsed = list(existing_log)
+            parsed.append({
+                "text": f"Compte créé (self-serve) : {cabinet_name} (id: {tid})",
+                "action": "conversion_self_serve",
+                "created_at": datetime.utcnow().isoformat() + "Z",
+            })
+            if not update_lead(
+                lead_id,
+                status="converted",
+                tenant_id=tid,
+                notes_log=json.dumps(parsed, ensure_ascii=False),
+            ):
+                raise HTTPException(500, "Erreur association du compte au lead")
+    except Exception as e:
+        if tid is not None:
+            if pg_delete_tenant(tid):
+                logger.warning(
+                    "create_account_from_lead: rollback tenant_id=%s lead_id=%s",
+                    tid,
+                    lead_id,
+                )
+            else:
+                logger.critical(
+                    "create_account_from_lead: rollback failed tenant_id=%s lead_id=%s",
+                    tid,
+                    lead_id,
+                )
+        if isinstance(e, HTTPException):
+            raise
+        logger.exception("create_account_from_lead failed lead_id=%s: %s", lead_id, e)
         raise HTTPException(500, "Impossible de créer le compte")
 
-    if not pg_create_tenant_user(
-        tid,
-        email,
-        role="owner",
-        password=temp_password,
-        must_change_password=True,
-    ):
-        raise HTTPException(500, "Impossible de créer l'utilisateur")
-
-    if not pg_update_tenant_flags(tid, {"ENABLE_BOOKING": True, "ENABLE_TRANSFER": True, "ENABLE_FAQ": True, "ENABLE_ANTI_LOOP": True}):
-        raise HTTPException(500, "Erreur configuration")
-
-    params_payload = {
-        "assistant_name": assistant_name,
-        "business_name": cabinet_name,
-        "sector": sector,
-        "contact_email": email,
-        "specialty_label": (lead.get("medical_specialty_label") or "").strip(),
-        "city": (lead.get("city") or "").strip(),
-        "phone_number": (lead.get("callback_phone") or "").strip(),
-        "client_onboarding_completed": False,
-        "lead_id": lead_id,
-        "lead_source": lead.get("source") or "landing_cta",
-    }
-    if not pg_update_tenant_params(tid, params_payload):
-        raise HTTPException(500, "Erreur paramètres")
-
-    booking_rules_final: Dict[str, Any] = {}
-    opening_hours = lead.get("opening_hours")
-    if isinstance(opening_hours, dict):
-        try:
-            booking_rules_final = convert_opening_hours_to_booking_rules(opening_hours)
-            booking_rules_final["horaires"] = derive_horaires_text(booking_rules_final)
-            if not pg_update_tenant_params(tid, booking_rules_final):
-                logger.warning("create_account_from_lead: horaires update failed tenant_id=%s", tid)
-        except Exception as e:
-            logger.warning("create_account_from_lead: horaires conversion failed: %s", e)
-            booking_rules_final = {}
-
-    # Init des tables normalisées "Mon cabinet" (non bloquant)
+    # L'email est un effet secondaire non transactionnel : le compte durable ne
+    # doit pas être supprimé si le fournisseur email est temporairement indisponible.
     try:
-        sync_normalized_from_params(tid, params_payload)
+        ok, err = send_welcome_email(
+            email=email,
+            client_name=cabinet_name,
+            assistant_id=assistant_name,
+            plan_key="growth",
+            phone_number="",
+            temp_password=temp_password,
+        )
+        if not ok:
+            logger.warning("create_account_from_lead welcome email failed: %s", err)
     except Exception as e:
-        logger.warning("create_account_from_lead: sync_normalized_from_params failed tenant_id=%s: %s", tid, e)
-    if booking_rules_final:
-        try:
-            sync_opening_hours_from_booking_rules(tid, booking_rules_final)
-        except Exception as e:
-            logger.warning("create_account_from_lead: sync_opening_hours failed tenant_id=%s: %s", tid, e)
+        logger.warning("create_account_from_lead welcome email exception: %s", e)
 
-    ok, err = send_welcome_email(
-        email=email,
-        client_name=cabinet_name,
-        assistant_id=assistant_name,
-        plan_key="growth",
-        phone_number="",
-        temp_password=temp_password,
-    )
-    if not ok:
-        logger.warning("create_account_from_lead welcome email failed: %s", err)
-
-    base_url = (
-        os.getenv("CLIENT_APP_ORIGIN") or os.getenv("VITE_UWI_APP_URL") or os.getenv("VITE_SITE_URL") or "https://www.uwiapp.com"
-    ).strip().rstrip("/")
-    login_url = f"{base_url}/login?email={email}&welcome=1"
-
-    try:
-        existing_log = lead.get("notes_log")
-        parsed = []
-        if isinstance(existing_log, str) and existing_log.strip():
-            parsed = json.loads(existing_log)
-        elif isinstance(existing_log, list):
-            parsed = list(existing_log)
-        parsed.append({
-            "text": f"Compte créé (self-serve) : {cabinet_name} (id: {tid})",
-            "action": "conversion_self_serve",
-            "created_at": datetime.utcnow().isoformat() + "Z",
-        })
-        update_lead(lead_id, status="converted", tenant_id=tid, notes_log=json.dumps(parsed, ensure_ascii=False))
-    except Exception as e:
-        logger.warning("create_account_from_lead lead sync failed: %s", e)
-
-    return {
-        "ok": True,
-        "tenant_id": tid,
-        "login_url": login_url,
-        "message": "Compte créé. Consultez votre email pour le mot de passe temporaire.",
-    }
+    return _create_account_result(tid, email)

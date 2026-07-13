@@ -727,6 +727,23 @@ def get_lead(lead_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+@contextmanager
+def lock_lead_conversion(lead_id: str):
+    """Sérialise les conversions self-serve d'un lead entre replicas."""
+    if not lead_id or not str(lead_id).strip():
+        raise ValueError("lead_id requis")
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (str(lead_id).strip(),),
+            )
+        try:
+            yield
+        finally:
+            conn.commit()
+
+
 def update_lead_callback_booking(
     lead_id: str,
     callback_booking_date: Optional[str],

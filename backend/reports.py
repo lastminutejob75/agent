@@ -868,6 +868,33 @@ class ReportGenerator:
 # Cron Jobs
 # ============================================
 
+_scheduler_instance = None
+
+
+def _env_enabled(name: str, default: bool = False) -> bool:
+    """Parse un booléen d'environnement sans activer une tâche sur une valeur inconnue."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int_in_range(name: str, default: int, minimum: int, maximum: int) -> int:
+    """Retourne un entier borné ; une configuration invalide retombe sur la valeur sûre."""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r invalide; utilisation de %s", name, raw, default)
+        return default
+    if not minimum <= value <= maximum:
+        logger.warning("%s=%r hors limites [%s, %s]; utilisation de %s", name, raw, minimum, maximum, default)
+        return default
+    return value
+
+
 def setup_scheduler():
     """
     Configure le scheduler pour les rapports automatiques.
@@ -875,6 +902,11 @@ def setup_scheduler():
     Utilise APScheduler pour envoyer le rapport à 18h chaque jour.
     Le canal est déterminé par la variable REPORT_CHANNEL.
     """
+    global _scheduler_instance
+    if _scheduler_instance is not None and getattr(_scheduler_instance, "running", False):
+        logger.info("Report scheduler already running; reusing existing instance")
+        return _scheduler_instance
+
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
         from apscheduler.triggers.cron import CronTrigger
@@ -924,6 +956,37 @@ def setup_scheduler():
         except Exception as e:
             logger.warning("expire_questionnaire_requests_job failed: %s", e)
 
+    # Usage Stripe de J-1 et retry J-2. Opt-in explicite car ce job déclenche
+    # une écriture de facturation externe.
+    if _env_enabled("STRIPE_USAGE_PUSH_ENABLED", default=False):
+        usage_hour = _env_int_in_range("STRIPE_USAGE_PUSH_HOUR_UTC", 1, 0, 23)
+        usage_minute = _env_int_in_range("STRIPE_USAGE_PUSH_MINUTE_UTC", 0, 0, 59)
+
+        def stripe_daily_usage_push_job():
+            try:
+                from backend.stripe_usage import push_daily_usage_with_retry_48h
+
+                result = push_daily_usage_with_retry_48h()
+                logger.info(
+                    "stripe_daily_usage_push_job: sent=%s skipped=%s failed=%s dates=%s",
+                    result.get("sent", 0),
+                    result.get("skipped", 0),
+                    result.get("failed", 0),
+                    result.get("dates", []),
+                )
+            except Exception as e:
+                logger.warning("stripe_daily_usage_push_job failed: %s", e)
+
+        scheduler.add_job(
+            stripe_daily_usage_push_job,
+            CronTrigger(hour=usage_hour, minute=usage_minute, timezone="UTC"),
+            id="stripe_daily_usage_push",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Stripe daily usage push scheduled at %02d:%02d UTC", usage_hour, usage_minute)
+
     # Rappels de RDV par SMS (~24h avant) : toutes les heures, fenêtre [now+24h, now+25h)
     @scheduler.scheduled_job(CronTrigger(minute=5), id="appointment_reminders")
     def appointment_reminders_job():
@@ -951,6 +1014,7 @@ def setup_scheduler():
         logger.warning("public_slots_prewarm scheduler setup failed: %s", e)
 
     scheduler.start()
+    _scheduler_instance = scheduler
     channel_type = os.getenv("REPORT_CHANNEL", "telegram")
     logger.info(f"Report scheduler started (daily at 18h, weekly on Sunday 20h) via {channel_type}")
     

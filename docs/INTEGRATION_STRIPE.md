@@ -68,6 +68,9 @@ Cron quotidien ──► push_daily_usage ──► UsageRecord ou MeterEvent
 |---|---|---|
 | `STRIPE_USE_METER_EVENTS` | `false` | Si `true` → `billing.MeterEvent.create` (nouveau Stripe Meters). Sinon → `UsageRecord.create` (legacy). |
 | `STRIPE_METER_EVENT_NAME` | `uwi.minutes` | Nom du meter event |
+| `STRIPE_USAGE_PUSH_ENABLED` | `false` | Active le job quotidien interne de push J-1/J-2. À définir à `true` sur Railway si aucun cron externe n'est utilisé. |
+| `STRIPE_USAGE_PUSH_HOUR_UTC` | `1` | Heure UTC du job quotidien interne (`0` à `23`). |
+| `STRIPE_USAGE_PUSH_MINUTE_UTC` | `0` | Minute UTC du job quotidien interne (`0` à `59`). |
 
 ### Frontend (`landing/src/`)
 
@@ -218,7 +221,11 @@ Tenant éligible si :
 - `run_upgrade_suggestions()` (logs uniquement, pas de changement de plan)
 
 ### Déclenchement prod
-Cron qui appelle `POST /api/admin/jobs/push-daily-usage` (cf. [`ROADMAP_MONETISATION.md`](./ROADMAP_MONETISATION.md)).
+Deux modes exclusifs :
+- scheduler interne : `STRIPE_USAGE_PUSH_ENABLED=true` (01:00 UTC par défaut) ;
+- cron externe qui appelle `POST /api/admin/jobs/push-daily-usage`.
+
+L'idempotence en base protège contre un double envoi accidentel si les deux sont activés, mais un seul mode doit être configuré en production.
 
 ### Idempotence
 Table `stripe_usage_push_log` (migrations `015`, `017`) — empêche le double-push pour un même `(tenant_id, day, item_id)`.

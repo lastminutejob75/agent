@@ -135,7 +135,7 @@ def _auth_impersonate_exchange(token: str, response: Response = None, request: O
     jti = (payload.get("jti") or "").strip()
     if not jti:
         raise HTTPException(400, "Token invalide (jti requis)")
-    if not register_impersonate_jti(jti):
+    if not register_impersonate_jti(jti, expires_at=payload.get("exp")):
         raise HTTPException(400, "Token déjà utilisé")
     tenant_id = int(payload["tenant_id"])
     tenant_user = pg_get_tenant_user_for_impersonation(tenant_id)

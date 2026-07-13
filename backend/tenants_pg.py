@@ -365,6 +365,7 @@ def pg_create_tenant(
     status: str = "active",
     plan_key: Optional[str] = None,
     billing_email: Optional[str] = None,
+    create_contact_user: bool = True,
 ) -> Optional[int]:
     """
     Crée un tenant + tenant_config dans PG.
@@ -403,18 +404,18 @@ def pg_create_tenant(
                     (tid, "{}", json.dumps(params)),
                 )
                 # Créer tenant_user pour contact_email (login email+mdp ou Google)
-                if contact_email and contact_email.strip():
-                    try:
-                        cur.execute(
-                            """
-                            INSERT INTO tenant_users (tenant_id, email, role)
-                            VALUES (%s, %s, 'owner')
-                            ON CONFLICT (email) DO UPDATE SET tenant_id = EXCLUDED.tenant_id
-                            """,
-                            (tid, contact_email.strip().lower()),
-                        )
-                    except Exception as eu:
-                        logger.debug("tenant_user create during onboarding: %s", eu)
+                if create_contact_user and contact_email and contact_email.strip():
+                    cur.execute(
+                        """
+                        INSERT INTO tenant_users (tenant_id, email, role)
+                        VALUES (%s, %s, 'owner')
+                        ON CONFLICT (email) DO NOTHING
+                        RETURNING id
+                        """,
+                        (tid, contact_email.strip().lower()),
+                    )
+                    if cur.fetchone() is None:
+                        raise ValueError("EMAIL_ALREADY_ASSIGNED")
                 conn.commit()
                 return tid
 

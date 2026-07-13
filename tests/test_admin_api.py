@@ -390,6 +390,7 @@ def test_get_call_detail_falls_back_to_vapi_calls_without_ivr_events(monkeypatch
 @patch("backend.routes.admin.pg_update_tenant_flags", return_value=True)
 @patch("backend.routes.admin.pg_update_tenant_params", return_value=True)
 @patch("backend.routes.admin.upsert_billing_from_subscription", return_value=True)
+@patch("backend.billing_pg.set_stripe_metered_item_id", return_value=True)
 @patch("backend.services.email_service.send_welcome_email", return_value=(True, None))
 @patch("backend.vapi_utils.create_vapi_assistant", new_callable=AsyncMock, return_value={"id": "asst_123"})
 @patch("stripe.Customer.create", return_value=SimpleNamespace(id="cus_123"))
@@ -401,6 +402,17 @@ def test_get_call_detail_falls_back_to_vapi_calls_without_ivr_events(monkeypatch
         current_period_start=None,
         current_period_end=None,
         trial_end=None,
+        items={
+            "data": [
+                {
+                    "id": "si_meter",
+                    "price": {
+                        "id": "price_meter",
+                        "recurring": {"usage_type": "metered"},
+                    },
+                },
+            ],
+        },
     ),
 )
 def test_admin_create_tenant_full_prefills_params_from_lead(
@@ -408,6 +420,7 @@ def test_admin_create_tenant_full_prefills_params_from_lead(
     _mock_customer,
     _mock_vapi,
     _mock_email,
+    _mock_metered_item,
     _mock_billing,
     mock_update_params,
     _mock_flags,
@@ -457,6 +470,54 @@ def test_admin_create_tenant_full_prefills_params_from_lead(
         and payload.get("horaires") == "Lun, Mar, Ven · 8h–19h"
         for payload in payloads
     )
+
+
+def test_admin_create_tenant_full_is_idempotent_for_converted_lead(
+    client,
+    admin_headers,
+    monkeypatch,
+):
+    import backend.leads_pg as leads_pg
+    import backend.routes.admin as admin_routes
+
+    monkeypatch.setattr(admin_routes.config, "USE_PG_TENANTS", True)
+    monkeypatch.setattr(
+        leads_pg,
+        "get_lead",
+        lambda lead_id: {"id": lead_id, "status": "converted", "tenant_id": 321},
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "pg_get_tenant_full",
+        lambda tenant_id: {
+            "tenant_id": tenant_id,
+            "params": {"vapi_assistant_id": "asst_existing"},
+        },
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "pg_create_tenant",
+        lambda **kwargs: pytest.fail("Un retry idempotent ne doit pas recréer le tenant"),
+    )
+
+    response = client.post(
+        "/api/admin/tenants/create",
+        headers=admin_headers,
+        json={
+            "name": "Cabinet déjà créé",
+            "email": "lead@test.fr",
+            "phone": "0611223344",
+            "sector": "medecin_generaliste",
+            "plan_key": "growth",
+            "assistant_id": "sophie",
+            "lead_id": "lead_123",
+            "send_welcome": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tenant_id"] == 321
+    assert response.json()["idempotent"] is True
 
 
 def test_admin_tenant_detail(client, admin_headers):

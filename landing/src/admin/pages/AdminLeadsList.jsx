@@ -181,7 +181,7 @@ export default function AdminLeadsList() {
   const [summary, setSummary] = useState(null);
   const [pipelineCounts, setPipelineCounts] = useState({});
   const [leads, setLeads] = useState([]);
-  const [selectedLeadId, setSelectedLeadId] = useState("");
+  const [selectedLeadId, setSelectedLeadId] = useState(searchParams.get("lead") || "");
   const [segment, setSegment] = useState(searchParams.get("segment") || "Tous");
   const [sort, setSort] = useState(searchParams.get("sort") || "created_desc");
   const [convertMode, setConvertMode] = useState(false);
@@ -216,6 +216,7 @@ export default function AdminLeadsList() {
   const page = Number(searchParams.get("page") || 1);
   const limit = Number(searchParams.get("limit") || 25);
   const followUpToday = searchParams.get("follow_up") === "today";
+  const targetLeadId = searchParams.get("lead") || "";
 
   useEffect(() => {
     function onResize() {
@@ -232,7 +233,7 @@ export default function AdminLeadsList() {
       setLoading(true);
       setError("");
       try {
-        const [sumRes, listRes] = await Promise.all([
+        const [sumRes, listRes, targetLead] = await Promise.all([
           getLeadsSummary("30d").catch(() => null),
           listAdminLeads({
             status: stage,
@@ -243,13 +244,20 @@ export default function AdminLeadsList() {
             limit,
             followUpToday,
           }),
+          targetLeadId ? adminApi.leadGet(targetLeadId).catch(() => null) : Promise.resolve(null),
         ]);
         if (cancelled) return;
         const mapped = (listRes.items || []).map(sanitizeForDisplay);
+        if (targetLead && !mapped.some((item) => String(item.id) === String(targetLead.id))) {
+          mapped.unshift(sanitizeForDisplay(targetLead));
+        }
         setSummary(sumRes);
         setPipelineCounts(listRes.pipeline || {});
         setLeads(mapped);
-        setSelectedLeadId((prev) => (prev && mapped.some((x) => String(x.id) === prev) ? prev : String(mapped[0]?.id || "")));
+        setSelectedLeadId((prev) => {
+          if (targetLeadId && mapped.some((x) => String(x.id) === targetLeadId)) return targetLeadId;
+          return prev && mapped.some((x) => String(x.id) === prev) ? prev : String(mapped[0]?.id || "");
+        });
       } catch (e) {
         if (cancelled) return;
         setError(e?.message || "Impossible de charger les leads");
@@ -262,7 +270,7 @@ export default function AdminLeadsList() {
     return () => {
       cancelled = true;
     };
-  }, [stage, query, segment, sort, page, limit, followUpToday, refreshKey]);
+  }, [stage, query, segment, sort, page, limit, followUpToday, targetLeadId, refreshKey]);
 
   const selectedLead = useMemo(
     () => leads.find((l) => String(l.id) === String(selectedLeadId)) || leads[0] || null,
@@ -801,6 +809,9 @@ export default function AdminLeadsList() {
                       type="button"
                       onClick={() => {
                         setSelectedLeadId(String(lead.id));
+                        const next = new URLSearchParams(searchParams);
+                        next.set("lead", String(lead.id));
+                        setSearchParams(next, { replace: true });
                         setConvertMode(false);
                       }}
                       style={{

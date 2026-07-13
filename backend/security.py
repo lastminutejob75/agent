@@ -3,6 +3,7 @@ Garde-fous sécurité (données médicales / multi-tenant).
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 import os
@@ -153,9 +154,8 @@ def verify_lead_access_token(lead_id: str, token: Optional[str]) -> bool:
 def assert_lead_access(lead_id: str, token: Optional[str]) -> None:
     if verify_lead_access_token(lead_id, token):
         return
-    if is_production():
-        raise HTTPException(403, "Accès refusé à cette ressource lead")
-    logger.warning("lead_access_token_missing_or_invalid lead_id=%s (autorisé hors prod)", (lead_id or "")[:36])
+    logger.warning("lead_access_token_missing_or_invalid lead_id=%s", (lead_id or "")[:36])
+    raise HTTPException(403, "Accès refusé à cette ressource lead")
 
 
 def _purge_impersonate_jtis() -> None:
@@ -165,10 +165,55 @@ def _purge_impersonate_jtis() -> None:
         _USED_IMPERSONATE_JTIS.pop(jti, None)
 
 
-def register_impersonate_jti(jti: str) -> bool:
-    """Retourne False si le jti a déjà été consommé (usage unique)."""
+def _register_impersonate_jti_pg(jti: str, expires_at: int) -> Optional[bool]:
+    """Enregistre atomiquement le jti dans Postgres. None = stockage indisponible."""
+    database_url = (os.environ.get("DATABASE_URL") or "").strip()
+    if not database_url or os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
+    digest = hashlib.sha256(jti.encode("utf-8")).hexdigest()
+    try:
+        import psycopg
+
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM impersonation_token_uses WHERE expires_at < NOW()"
+                )
+                cur.execute(
+                    """
+                    INSERT INTO impersonation_token_uses (jti_hash, expires_at)
+                    VALUES (%s, to_timestamp(%s))
+                    ON CONFLICT (jti_hash) DO NOTHING
+                    RETURNING jti_hash
+                    """,
+                    (digest, int(expires_at)),
+                )
+                inserted = cur.fetchone() is not None
+            conn.commit()
+        return inserted
+    except Exception as exc:
+        logger.error("impersonation_jti_store_failed: %s", exc)
+        return None
+
+
+def register_impersonate_jti(jti: str, expires_at: Optional[int] = None) -> bool:
+    """Retourne False si le jti a déjà été consommé (usage unique inter-réplicas)."""
     if not jti:
         return True
+    pg_result = _register_impersonate_jti_pg(
+        jti,
+        int(expires_at or (time.time() + _IMPERSONATE_JTI_TTL_SECONDS)),
+    )
+    if pg_result is not None:
+        return pg_result
+    if (
+        not os.environ.get("PYTEST_CURRENT_TEST")
+        and is_production()
+        and (os.environ.get("DATABASE_URL") or "").strip()
+    ):
+        # En production avec Postgres configuré, ne pas dégrader silencieusement
+        # vers une mémoire locale qui autoriserait un rejeu inter-réplicas.
+        return False
     _purge_impersonate_jtis()
     if jti in _USED_IMPERSONATE_JTIS:
         return False

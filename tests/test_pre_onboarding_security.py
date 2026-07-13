@@ -1,27 +1,47 @@
 """Tests securite pour les endpoints /api/pre-onboarding/* (audit 2026-05).
 
-Verifie que :
+Vérifie que :
 - POST /commit retourne un token signe.
-- GET /leads/{id}/email refuse l'acces sans token (401) ou avec un mauvais token (403).
+- GET /leads/{id}/email refuse l'accès sans token ou avec un mauvais token (403).
 - GET /leads/{id}/check idem.
 - POST /leads/{id}/callback-booking idem.
 - POST /leads/{id}/create-account idem.
-- Token expire → 410.
-- Bypass admin (Bearer ADMIN_API_TOKEN) fonctionne.
+- Les tokens JWT expirés ou liés à un autre lead sont refusés.
+- Aucun bypass admin n'est accepté sur les routes publiques d'un lead.
 """
 
 from __future__ import annotations
 
 import os
+import time
 from unittest.mock import patch
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
 def _ensure_secret(monkeypatch):
-    monkeypatch.setenv("LEAD_TOKEN_SECRET", "test-lead-token-secret-32-bytes-min-ok")
+    monkeypatch.setenv(
+        "JWT_SECRET",
+        os.environ.get("JWT_SECRET") or "test-lead-token-secret-32-bytes-min-ok",
+    )
+
+
+def _valid_token(lead_id: str) -> str:
+    from backend.security import issue_lead_access_token
+
+    return issue_lead_access_token(lead_id)
+
+
+def _expired_token(lead_id: str) -> str:
+    now = int(time.time())
+    return jwt.encode(
+        {"typ": "lead_access", "lead_id": lead_id, "iat": now - 20, "exp": now - 10},
+        os.environ["JWT_SECRET"],
+        algorithm="HS256",
+    )
 
 
 @pytest.fixture
@@ -56,11 +76,10 @@ def fake_lead():
 # -----------------------------------------------------------------------------
 
 
-def test_check_without_token_returns_401(client):
-    """GET /leads/{id}/check sans token → 401 (token requis)."""
+def test_check_without_token_returns_403(client):
+    """GET /leads/{id}/check sans token → accès refusé."""
     r = client.get("/api/pre-onboarding/leads/some-uuid/check")
-    assert r.status_code == 401
-    assert "token" in (r.json().get("detail") or "").lower()
+    assert r.status_code == 403
 
 
 def test_check_with_invalid_token_returns_403(client):
@@ -69,20 +88,16 @@ def test_check_with_invalid_token_returns_403(client):
     assert r.status_code == 403
 
 
-def test_check_with_expired_token_returns_410(client):
-    """Token expire → 410 (recommencer l'inscription)."""
-    from backend.lead_tokens import make_lead_token
-
-    expired = make_lead_token("lead-x", ttl_seconds=-10)
+def test_check_with_expired_token_returns_403(client):
+    """Un JWT expiré est refusé."""
+    expired = _expired_token("lead-x")
     r = client.get(f"/api/pre-onboarding/leads/lead-x/check?token={expired}")
-    assert r.status_code == 410
+    assert r.status_code == 403
 
 
 def test_check_with_token_for_different_lead_returns_403(client):
     """Token genere pour lead A, utilise sur lead B → 403."""
-    from backend.lead_tokens import make_lead_token
-
-    t = make_lead_token("lead-A")
+    t = _valid_token("lead-A")
     r = client.get(f"/api/pre-onboarding/leads/lead-B/check?token={t}")
     assert r.status_code == 403
 
@@ -93,31 +108,27 @@ def test_check_with_valid_token_passes_token_check(client, fake_lead):
     On ne teste pas le retour metier (DB Postgres mockee), juste que le 401/403/410
     n'est PAS retourne.
     """
-    from backend.lead_tokens import make_lead_token
-
-    t = make_lead_token("lead-test-1")
+    t = _valid_token("lead-test-1")
     with patch("backend.routes.pre_onboarding.lead_exists", return_value=True):
         r = client.get(f"/api/pre-onboarding/leads/lead-test-1/check?token={t}")
         assert r.status_code == 200
         assert r.json().get("exists") is True
 
 
-def test_check_with_admin_bearer_bypass(client):
-    """Auth Bearer admin → bypass token requis."""
+def test_check_with_admin_bearer_does_not_bypass(client):
+    """Un Bearer admin ne remplace pas le jeton propre au lead."""
     admin_token = os.environ.get("ADMIN_API_TOKEN", "test-admin-token-pytest")
     with patch("backend.routes.pre_onboarding.lead_exists", return_value=True):
         r = client.get(
             "/api/pre-onboarding/leads/any-id/check",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
-        assert r.status_code == 200
+        assert r.status_code == 403
 
 
 def test_check_token_via_header_works(client):
     """Token passe via header X-Lead-Token (alternative a la query string)."""
-    from backend.lead_tokens import make_lead_token
-
-    t = make_lead_token("lead-header")
+    t = _valid_token("lead-header")
     with patch("backend.routes.pre_onboarding.lead_exists", return_value=True):
         r = client.get(
             "/api/pre-onboarding/leads/lead-header/check",
@@ -131,9 +142,9 @@ def test_check_token_via_header_works(client):
 # -----------------------------------------------------------------------------
 
 
-def test_email_without_token_returns_401(client):
+def test_email_without_token_returns_403(client):
     r = client.get("/api/pre-onboarding/leads/some-uuid/email")
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_email_with_invalid_token_returns_403(client):
@@ -142,9 +153,7 @@ def test_email_with_invalid_token_returns_403(client):
 
 
 def test_email_with_valid_token_returns_email(client, fake_lead):
-    from backend.lead_tokens import make_lead_token
-
-    t = make_lead_token("lead-test-1")
+    t = _valid_token("lead-test-1")
     with patch("backend.routes.pre_onboarding.get_lead", return_value=fake_lead):
         r = client.get(f"/api/pre-onboarding/leads/lead-test-1/email?token={t}")
         assert r.status_code == 200
@@ -156,12 +165,12 @@ def test_email_with_valid_token_returns_email(client, fake_lead):
 # -----------------------------------------------------------------------------
 
 
-def test_callback_booking_without_token_returns_401(client):
+def test_callback_booking_without_token_returns_403(client):
     r = client.post(
         "/api/pre-onboarding/leads/some-uuid/callback-booking",
         json={"date": "2026-06-01", "slot": "10:00", "phone": "0612345678"},
     )
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_callback_booking_with_invalid_token_returns_403(client):
@@ -177,13 +186,13 @@ def test_callback_booking_with_invalid_token_returns_403(client):
 # -----------------------------------------------------------------------------
 
 
-def test_create_account_without_token_returns_401(client):
-    """POST /leads/{id}/create-account sans token → 401 (CRITIQUE)."""
+def test_create_account_without_token_returns_403(client):
+    """POST /leads/{id}/create-account sans token → accès refusé avant la DB."""
     r = client.post(
         "/api/pre-onboarding/leads/some-uuid/create-account",
         json={"email": "fake@example.com"},
     )
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_create_account_with_invalid_token_returns_403(client):
@@ -194,15 +203,13 @@ def test_create_account_with_invalid_token_returns_403(client):
     assert r.status_code == 403
 
 
-def test_create_account_with_expired_token_returns_410(client):
-    from backend.lead_tokens import make_lead_token
-
-    expired = make_lead_token("lead-x", ttl_seconds=-10)
+def test_create_account_with_expired_token_returns_403(client):
+    expired = _expired_token("lead-x")
     r = client.post(
         f"/api/pre-onboarding/leads/lead-x/create-account?token={expired}",
         json={"email": "fake@example.com"},
     )
-    assert r.status_code == 410
+    assert r.status_code == 403
 
 
 # -----------------------------------------------------------------------------
@@ -211,7 +218,7 @@ def test_create_account_with_expired_token_returns_410(client):
 
 
 def test_commit_returns_token(client):
-    """POST /commit doit retourner un champ `token` non vide (HMAC signe)."""
+    """POST /commit doit retourner un JWT lead non vide et vérifiable."""
     payload = {
         "email": "newuser@example.com",
         "medical_specialty": "dentiste",
@@ -224,7 +231,7 @@ def test_commit_returns_token(client):
     }
     with patch("backend.routes.pre_onboarding.upsert_lead", return_value="lead-new-uuid"), \
          patch("backend.routes.pre_onboarding.send_lead_founder_email", return_value=(True, None)), \
-         patch("backend.routes.pre_onboarding.send_pre_onboarding_admin_notification_email", return_value=(True, None)):
+         patch("backend.routes.pre_onboarding.send_lead_prospect_confirmation_email", return_value=(True, None)):
         r = client.post("/api/pre-onboarding/commit", json=payload)
         assert r.status_code == 200
         data = r.json()
@@ -233,7 +240,6 @@ def test_commit_returns_token(client):
         assert "token" in data
         assert data["token"]  # non vide
         # Le token doit etre verifiable
-        from backend.lead_tokens import verify_lead_token
-        ok, lead_id, _ = verify_lead_token(data["token"], expected_lead_id="lead-new-uuid")
-        assert ok is True
-        assert lead_id == "lead-new-uuid"
+        from backend.security import verify_lead_access_token
+
+        assert verify_lead_access_token("lead-new-uuid", data["token"]) is True

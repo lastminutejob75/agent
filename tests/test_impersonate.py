@@ -93,7 +93,7 @@ def test_auth_impersonate_accepts_valid_token(mock_detail, mock_tenant_name, moc
     assert token
 
     r_get = client.get(f"/api/auth/impersonate?token={token}")
-    assert r_get.status_code == 200
+    assert r_get.status_code == 200, r_get.text
     data = r_get.json()
     assert data.get("tenant_id") == 1
     assert data.get("tenant_name") == "Cabinet Dupont"
@@ -128,7 +128,7 @@ def test_auth_impersonate_token_single_use(mock_detail, mock_tenant_name, mock_i
     assert token
 
     r_ok = client.get(f"/api/auth/impersonate?token={token}")
-    assert r_ok.status_code == 200
+    assert r_ok.status_code == 200, r_ok.text
 
     r_reply = client.get(f"/api/auth/impersonate?token={token}")
     assert r_reply.status_code == 400

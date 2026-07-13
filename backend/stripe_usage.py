@@ -22,8 +22,18 @@ def _stripe_meter_event_name() -> str:
 
 
 def _stripe_use_meter_events() -> bool:
-    v = (os.environ.get("STRIPE_USE_METER_EVENTS") or "false").strip().lower()
-    return v in ("true", "1", "yes")
+    configured = os.environ.get("STRIPE_USE_METER_EVENTS")
+    if configured is not None:
+        return configured.strip().lower() in ("true", "1", "yes", "on")
+    # stripe-python récent (notamment v15+) ne publie plus UsageRecord.
+    # Sans choix explicite, utiliser l'API Meter Events disponible plutôt que
+    # laisser le job quotidien échouer sur un attribut absent.
+    try:
+        import stripe
+
+        return not hasattr(stripe, "UsageRecord")
+    except ImportError:
+        return False
 
 
 def _pg_url() -> str | None:

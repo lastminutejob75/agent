@@ -89,3 +89,82 @@ def test_admin_lead_delete_404(client, admin_headers, monkeypatch):
     monkeypatch.setattr(leads_pg, "delete_lead", lambda lead_id: False)
     res = client.delete("/api/admin/leads/missing", headers=admin_headers)
     assert res.status_code == 404
+
+
+def test_admin_lead_convert_requires_tenant_id(client, admin_headers):
+    res = client.post(
+        "/api/admin/leads/lead-1/convert",
+        headers=admin_headers,
+        json={},
+    )
+    assert res.status_code == 422
+
+
+def test_admin_lead_convert_rejects_unknown_tenant(client, admin_headers, monkeypatch):
+    import backend.leads_pg as leads_pg
+    import backend.tenants_pg as tenants_pg
+
+    monkeypatch.setattr(
+        leads_pg,
+        "get_lead",
+        lambda lead_id: {"id": lead_id, "status": "new", "tenant_id": None, "notes_log": "[]"},
+    )
+    monkeypatch.setattr(tenants_pg, "pg_get_tenant_full", lambda tenant_id: None)
+
+    res = client.post(
+        "/api/admin/leads/lead-1/convert",
+        headers=admin_headers,
+        json={"tenant_id": 404},
+    )
+    assert res.status_code == 404
+
+
+def test_admin_lead_convert_is_idempotent_for_same_tenant(client, admin_headers, monkeypatch):
+    import backend.leads_pg as leads_pg
+    import backend.tenants_pg as tenants_pg
+
+    monkeypatch.setattr(
+        leads_pg,
+        "get_lead",
+        lambda lead_id: {
+            "id": lead_id,
+            "status": "converted",
+            "tenant_id": 42,
+            "notes_log": "[]",
+        },
+    )
+    monkeypatch.setattr(
+        tenants_pg,
+        "pg_get_tenant_full",
+        lambda tenant_id: {"tenant_id": tenant_id},
+    )
+    monkeypatch.setattr(
+        leads_pg,
+        "update_lead",
+        lambda *args, **kwargs: pytest.fail("Une conversion idempotente ne doit pas réécrire le lead"),
+    )
+
+    res = client.post(
+        "/api/admin/leads/lead-1/convert",
+        headers=admin_headers,
+        json={"tenant_id": 42},
+    )
+    assert res.status_code == 200
+    assert res.json()["idempotent"] is True
+
+
+def test_admin_lead_status_cannot_bypass_conversion(client, admin_headers, monkeypatch):
+    import backend.leads_pg as leads_pg
+
+    monkeypatch.setattr(
+        leads_pg,
+        "get_lead",
+        lambda lead_id: {"id": lead_id, "status": "new", "tenant_id": None, "notes_log": "[]"},
+    )
+
+    res = client.patch(
+        "/api/admin/leads/lead-1/status",
+        headers=admin_headers,
+        json={"status": "converted"},
+    )
+    assert res.status_code == 409

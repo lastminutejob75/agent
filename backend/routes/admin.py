@@ -461,6 +461,7 @@ class CreateTenantRequest(BaseModel):
 
     name: str = Field(..., min_length=2, max_length=120)
     email: EmailStr
+    owner_email: Optional[EmailStr] = None
     phone: str = Field(..., min_length=5, max_length=32)
     sector: str = Field(
         ...,
@@ -473,6 +474,8 @@ class CreateTenantRequest(BaseModel):
     send_welcome: bool = Field(default=True)
     booking_rules: Optional[Dict[str, Any]] = None
     lead_id: Optional[str] = Field(default=None, max_length=64)
+    vapi_mode: str = Field(default="create", pattern="^(create|link|later)$")
+    existing_vapi_assistant_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class HorairesBody(BaseModel):
@@ -2663,7 +2666,7 @@ class LeadFollowUpBody(BaseModel):
 
 
 class LeadConvertBody(BaseModel):
-    tenant_id: Optional[int] = None
+    tenant_id: int = Field(..., ge=1)
     note: Optional[str] = None
 
 
@@ -2971,8 +2974,17 @@ def admin_lead_patch(
 ):
     """Met à jour statut, notes, notes_log et/ou follow_up_at d'un lead."""
     from backend.leads_pg import get_lead, update_lead
+    from backend.tenants_pg import pg_get_tenant_full
     if get_lead(lead_id) is None:
         raise HTTPException(404, "Lead non trouvé")
+    if body.status == "converted":
+        if not body.tenant_id:
+            raise HTTPException(
+                409,
+                "Une conversion nécessite un tenant_id. Utilisez l'action de conversion du lead.",
+            )
+        if pg_get_tenant_full(body.tenant_id) is None:
+            raise HTTPException(404, "Tenant de conversion introuvable")
     ok = update_lead(
         lead_id,
         status=body.status,
@@ -2997,6 +3009,11 @@ def admin_lead_set_status(
     lead = get_lead(lead_id)
     if not lead:
         raise HTTPException(404, "Lead non trouvé")
+    if body.status == "converted":
+        raise HTTPException(
+            409,
+            "Le statut converti doit être appliqué via l'action de conversion avec un tenant_id.",
+        )
     log = []
     existing = lead.get("notes_log")
     try:
@@ -3099,14 +3116,27 @@ def admin_lead_mark_lost(
 @router.post("/admin/leads/{lead_id}/convert")
 def admin_lead_convert(
     lead_id: str,
-    body: LeadConvertBody = Body(default=LeadConvertBody()),
+    body: LeadConvertBody,
     _: None = Depends(_verify_admin),
 ):
     from backend.leads_pg import get_lead, update_lead
+    from backend.tenants_pg import pg_get_tenant_full
 
     lead = get_lead(lead_id)
     if not lead:
         raise HTTPException(404, "Lead non trouvé")
+    if pg_get_tenant_full(body.tenant_id) is None:
+        raise HTTPException(404, "Tenant de conversion introuvable")
+    current_tenant_id = lead.get("tenant_id")
+    if lead.get("status") == "converted" and current_tenant_id:
+        if int(current_tenant_id) != body.tenant_id:
+            raise HTTPException(409, "Ce lead est déjà converti vers un autre tenant")
+        return {
+            "ok": True,
+            "lead_id": lead_id,
+            "tenant_id": body.tenant_id,
+            "idempotent": True,
+        }
     log = []
     existing = lead.get("notes_log")
     try:
@@ -3117,20 +3147,19 @@ def admin_lead_convert(
     except Exception:
         log = []
     txt = "Lead converti en cabinet client"
-    if body.tenant_id:
-        txt += f" (tenant_id={body.tenant_id})"
+    txt += f" (tenant_id={body.tenant_id})"
     if body.note:
         txt += f" · {body.note}"
     log.append({"text": txt, "action": "lead_converted_to_tenant", "created_at": datetime.utcnow().isoformat() + "Z"})
     ok = update_lead(
         lead_id,
         status="converted",
-        tenant_id=body.tenant_id if body.tenant_id else None,
+        tenant_id=body.tenant_id,
         notes_log=json.dumps(log, ensure_ascii=False),
     )
     if not ok:
         raise HTTPException(500, "Erreur conversion lead")
-    return {"ok": True, "lead_id": lead_id, "tenant_id": body.tenant_id}
+    return {"ok": True, "lead_id": lead_id, "tenant_id": body.tenant_id, "idempotent": False}
 
 
 @router.post("/admin/leads/{lead_id}/send-onboarding-link")
@@ -6399,19 +6428,44 @@ async def admin_create_tenant_full(
     contact_email = (body.email or "").strip().lower()
     if not contact_email:
         raise HTTPException(400, "email requis")
-
-    existing = pg_get_tenant_user_by_email(contact_email)
-    if existing:
-        raise HTTPException(409, "Cet email est déjà rattaché à un autre client.")
+    owner_email = str(body.owner_email or body.email).strip().lower()
+    if body.vapi_mode == "link" and not (body.existing_vapi_assistant_id or "").strip():
+        raise HTTPException(400, "existing_vapi_assistant_id requis en mode link")
+    if body.twilio_number and body.vapi_mode == "later":
+        raise HTTPException(400, "Un numéro Twilio nécessite un assistant Vapi créé ou lié")
 
     lead = None
     if body.lead_id:
-        try:
-            from backend.leads_pg import get_lead
+        from backend.leads_pg import get_lead
 
-            lead = get_lead(body.lead_id)
-        except Exception as e:
-            logger.warning("createTenantFull lead load failed lead_id=%s: %s", body.lead_id, e)
+        lead = get_lead(body.lead_id)
+        if not lead:
+            raise HTTPException(404, "Lead non trouvé")
+        lead_tenant_id = lead.get("tenant_id")
+        if lead.get("status") == "converted" and lead_tenant_id:
+            existing_tenant = pg_get_tenant_full(int(lead_tenant_id))
+            if not existing_tenant:
+                raise HTTPException(409, "Lead converti vers un tenant introuvable")
+            return {
+                "success": True,
+                "tenant_id": int(lead_tenant_id),
+                "idempotent": True,
+                "results": {
+                    "tenant_id": int(lead_tenant_id),
+                    "vapi_assistant_id": (existing_tenant.get("params") or {}).get("vapi_assistant_id"),
+                    "stripe_customer_id": None,
+                    "stripe_subscription_id": None,
+                    "twilio_number": None,
+                    "errors": [],
+                    "warnings": [],
+                },
+            }
+        if lead.get("status") == "converted" or lead_tenant_id:
+            raise HTTPException(409, "État de conversion du lead incohérent")
+
+    existing = pg_get_tenant_user_by_email(owner_email)
+    if existing:
+        raise HTTPException(409, "Cet email est déjà rattaché à un autre client.")
 
     temp_password = secrets.token_urlsafe(10)
     stripe_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
@@ -6454,6 +6508,7 @@ async def admin_create_tenant_full(
             timezone=body.timezone,
             status="active",
             plan_key=body.plan_key,
+            create_contact_user=False,
         )
         if not tid:
             raise RuntimeError("Impossible de créer le tenant en base")
@@ -6462,7 +6517,7 @@ async def admin_create_tenant_full(
 
         if not pg_create_tenant_user(
             tid,
-            contact_email,
+            owner_email,
             role="owner",
             password=temp_password,
             must_change_password=True,
@@ -6485,6 +6540,7 @@ async def admin_create_tenant_full(
             "sector": body.sector,
             "plan_key": body.plan_key,
             "contact_email": contact_email,
+            "owner_login_email": owner_email,
             "client_onboarding_completed": False,
         }
         if lead:
@@ -6530,20 +6586,25 @@ async def admin_create_tenant_full(
 
         current_step = 2
         logger.info("createTenantFull step=2 started tenant_id=%s", tid)
-        vapi_assistant = await create_vapi_assistant(
-            tenant_id=tid,
-            tenant_name=body.name.strip(),
-            assistant_id=body.assistant_id,
-            sector=body.sector,
-            phone=body.phone,
-        )
-        vapi_id = (vapi_assistant or {}).get("id") or ""
-        if not vapi_id:
-            raise RuntimeError("Assistant Vapi créé sans identifiant")
-        created["vapi_assistant_id"] = vapi_id
-        results["vapi_assistant_id"] = vapi_id
-        if not pg_update_tenant_params(tid, {"vapi_assistant_id": vapi_id}):
-            raise RuntimeError("Impossible d'enregistrer l'assistant Vapi sur le tenant")
+        vapi_id = ""
+        if body.vapi_mode == "create":
+            vapi_assistant = await create_vapi_assistant(
+                tenant_id=tid,
+                tenant_name=body.name.strip(),
+                assistant_id=body.assistant_id,
+                sector=body.sector,
+                phone=body.phone,
+            )
+            vapi_id = (vapi_assistant or {}).get("id") or ""
+            if not vapi_id:
+                raise RuntimeError("Assistant Vapi créé sans identifiant")
+            created["vapi_assistant_id"] = vapi_id
+        elif body.vapi_mode == "link":
+            vapi_id = (body.existing_vapi_assistant_id or "").strip()
+        if vapi_id:
+            results["vapi_assistant_id"] = vapi_id
+            if not pg_update_tenant_params(tid, {"vapi_assistant_id": vapi_id}):
+                raise RuntimeError("Impossible d'enregistrer l'assistant Vapi sur le tenant")
         logger.info("createTenantFull step=2 ok tenant_id=%s", tid)
 
         current_step = 3
@@ -6558,10 +6619,11 @@ async def admin_create_tenant_full(
         current_step = 4
         logger.info("createTenantFull step=4 started tenant_id=%s", tid)
         customer = stripe.Customer.create(
-            email=contact_email,
+            email=owner_email,
             name=body.name.strip(),
             phone=body.phone,
             metadata={"tenant_id": str(tid), "plan": body.plan_key},
+            idempotency_key=f"tenant-{tid}-customer",
         )
         created["stripe_customer_id"] = customer.id
         results["stripe_customer_id"] = customer.id
@@ -6575,8 +6637,9 @@ async def admin_create_tenant_full(
             trial_period_days=30,
             payment_behavior="default_incomplete",
             payment_settings={"save_default_payment_method": "on_subscription"},
-            expand=["latest_invoice.payment_intent"],
+            expand=["latest_invoice.payment_intent", "items.data.price"],
             metadata={"tenant_id": str(tid), "plan_key": body.plan_key},
+            idempotency_key=f"tenant-{tid}-subscription",
         )
         created["stripe_subscription_id"] = subscription.id
         results["stripe_subscription_id"] = subscription.id
@@ -6601,6 +6664,14 @@ async def admin_create_tenant_full(
             stripe_customer_id=customer.id,
         ):
             raise RuntimeError("Impossible d'enregistrer la souscription Stripe en base")
+        if metered_price_id:
+            from backend.billing_pg import set_stripe_metered_item_id
+            from backend.routes.stripe_webhook import _get_metered_subscription_item_id
+
+            metered_item_id = _get_metered_subscription_item_id(subscription)
+            if not metered_item_id or not set_stripe_metered_item_id(tid, metered_item_id):
+                raise RuntimeError("Impossible d'enregistrer le compteur Stripe en base")
+            results["stripe_metered_item_id"] = metered_item_id
         logger.info("createTenantFull step=4 ok tenant_id=%s", tid)
 
         current_step = 5
@@ -6608,7 +6679,7 @@ async def admin_create_tenant_full(
         if body.send_welcome:
             try:
                 ok, err = send_welcome_email(
-                    email=contact_email,
+                    email=owner_email,
                     client_name=body.name.strip(),
                     assistant_id=body.assistant_id,
                     plan_key=body.plan_key,
@@ -6624,38 +6695,31 @@ async def admin_create_tenant_full(
         logger.info("createTenantFull step=5 ok tenant_id=%s", tid)
 
         if body.lead_id:
-            try:
-                from backend.leads_pg import get_lead, update_lead
+            from backend.leads_pg import update_lead
 
-                lead_for_sync = lead or get_lead(body.lead_id)
-                if lead_for_sync:
-                    existing_log = lead_for_sync.get("notes_log")
-                    parsed = []
-                    if isinstance(existing_log, str) and existing_log.strip():
-                        parsed = json.loads(existing_log)
-                    elif isinstance(existing_log, list):
-                        parsed = list(existing_log)
-                    parsed.append({
-                        "text": f"Tenant créé : {body.name.strip()} (id: {tid})",
-                        "action": "conversion",
-                        "created_at": datetime.utcnow().isoformat() + "Z",
-                    })
-                    if not update_lead(
-                        body.lead_id,
-                        status="converted",
-                        tenant_id=tid,
-                        notes_log=json.dumps(parsed, ensure_ascii=False),
-                    ):
-                        results["warnings"].append("lead_link_failed")
-                else:
-                    results["warnings"].append("lead_not_found")
-            except Exception as e:
-                logger.warning("createTenantFull lead sync failed lead_id=%s tenant_id=%s: %s", body.lead_id, tid, e)
-                results["warnings"].append("lead_link_failed")
+            existing_log = lead.get("notes_log")
+            parsed = []
+            if isinstance(existing_log, str) and existing_log.strip():
+                parsed = json.loads(existing_log)
+            elif isinstance(existing_log, list):
+                parsed = list(existing_log)
+            parsed.append({
+                "text": f"Tenant créé : {body.name.strip()} (id: {tid})",
+                "action": "conversion",
+                "created_at": datetime.utcnow().isoformat() + "Z",
+            })
+            if not update_lead(
+                body.lead_id,
+                status="converted",
+                tenant_id=tid,
+                notes_log=json.dumps(parsed, ensure_ascii=False),
+            ):
+                raise RuntimeError("Impossible de lier le lead au tenant")
 
         return {
             "success": True,
             "tenant_id": tid,
+            "idempotent": False,
             "results": results,
         }
     except stripe.StripeError as e:

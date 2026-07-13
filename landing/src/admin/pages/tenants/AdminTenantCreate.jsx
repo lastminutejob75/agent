@@ -60,6 +60,15 @@ function slugifyHint(parts) {
     .slice(0, 80);
 }
 
+function sectorForApi(profession) {
+  const value = (profession || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (value.includes("dent")) return "dentiste";
+  if (value.includes("kine")) return "kine";
+  if (value.includes("infirm")) return "infirmier";
+  if (value.includes("general")) return "medecin_generaliste";
+  return "specialiste";
+}
+
 export default function AdminTenantCreate() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -69,14 +78,14 @@ export default function AdminTenantCreate() {
   const [errorMsg, setErrorMsg] = useState("");
   const [fromLeadData, setFromLeadData] = useState(null);
   const [form, setForm] = useState({
-    cabinetName: "Cabinet Nova",
-    practitionerName: "Dr Amine Nova",
+    cabinetName: "",
+    practitionerName: "",
     tenantType: "solo",
-    profession: "Médecin généraliste",
-    city: "Roubaix",
-    address: "12 rue Example, 59100 Roubaix",
+    profession: "",
+    city: "",
+    address: "",
     currentPhone: "",
-    contactEmail: "cabinet.nova@example.fr",
+    contactEmail: "",
     plan: "trial",
     channelVoice: true,
     channelPublicPage: true,
@@ -154,7 +163,9 @@ export default function AdminTenantCreate() {
   }, [fromLead]);
 
   const planKeyForApi = () => {
-    if (form.plan === "trial") return "";
+    // Tous les abonnements créés par le provisioning complet démarrent par
+    // un essai Stripe de 30 jours. Le choix "trial" utilise donc Growth.
+    if (form.plan === "trial") return "growth";
     if (form.plan === "starter") return "starter";
     if (form.plan === "growth") return "growth";
     if (form.plan === "pro") return "pro";
@@ -167,8 +178,10 @@ export default function AdminTenantCreate() {
     try {
       const name = form.cabinetName.trim();
       const email = form.contactEmail.trim().toLowerCase();
+      const phone = form.currentPhone.trim();
       if (!name || name.length < 2) throw new Error("Nom du cabinet trop court.");
       if (!email) throw new Error("Email cabinet requis.");
+      if (phone.length < 5) throw new Error("Téléphone cabinet requis.");
 
       const notesPayload = {
         wizard: "tenant_create_v1",
@@ -186,19 +199,26 @@ export default function AdminTenantCreate() {
         calendar_provider: form.calendarProvider,
       };
 
-      const created = await adminApi.createTenant({
+      const created = await adminApi.createTenantFull({
         name,
-        contact_email: email,
-        timezone: "Europe/Paris",
-        business_type: (form.profession || "").trim() || "medical",
-        notes: JSON.stringify(notesPayload).slice(0, 1950),
+        email,
+        owner_email: form.ownerEmail.trim().toLowerCase() || null,
+        phone,
+        sector: sectorForApi(form.profession),
         plan_key: planKeyForApi(),
-        billing_email: form.ownerEmail.trim() || undefined,
-        initial_status: "pending_payment",
+        assistant_id: "sophie",
+        timezone: "Europe/Paris",
+        send_welcome: !form.sendInviteLater,
+        lead_id: fromLead || null,
+        vapi_mode: form.vapiMode,
+        existing_vapi_assistant_id:
+          form.vapiMode === "link" ? form.vapiAssistantId.trim() : null,
       });
 
-      const tenantId = created.tenant_id;
+      const tenantId = created.tenant_id || created.results?.tenant_id;
+      if (!tenantId) throw new Error("Le provisioning n'a pas retourné de tenant.");
       const params = {
+        creation_notes: JSON.stringify(notesPayload).slice(0, 1950),
         practitioner_name: form.practitionerName.trim(),
         business_name: name,
         specialty_label: (form.profession || "").trim(),
@@ -224,23 +244,6 @@ export default function AdminTenantCreate() {
       }
 
       await adminApi.patchTenantParams(tenantId, params);
-      if (!form.sendInviteLater) {
-        const loginEmail = (form.ownerEmail || form.contactEmail).trim().toLowerCase();
-        await adminApi.provisionTenantAccess(tenantId, {
-          email: loginEmail,
-          name,
-        });
-      }
-      if (fromLead) {
-        try {
-          await adminApi.leadConvert(fromLead, {
-            tenant_id: tenantId,
-            note: "Conversion depuis /admin/tenants/new?fromLead",
-          });
-        } catch {
-          // Non bloquant.
-        }
-      }
       navigate(`/admin/tenants/${tenantId}`);
     } catch (err) {
       const code = err?.data?.error_code;
@@ -284,8 +287,8 @@ export default function AdminTenantCreate() {
           <Field label="Adresse">
             <input style={inputStyle} value={form.address} onChange={(e) => set("address", e.target.value)} />
           </Field>
-          <Field label="Téléphone actuel du cabinet">
-            <input style={inputStyle} value={form.currentPhone} onChange={(e) => set("currentPhone", e.target.value)} placeholder="+33…" />
+          <Field label="Téléphone actuel du cabinet *">
+            <input style={inputStyle} value={form.currentPhone} onChange={(e) => set("currentPhone", e.target.value)} placeholder="+33…" required minLength={5} />
           </Field>
           <Field label="Email cabinet *">
             <input style={inputStyle} type="email" value={form.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} required />

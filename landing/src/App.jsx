@@ -131,7 +131,6 @@ const AdminBillingPage = lazy(() => import("./admin/pages/AdminBillingPage"));
 const AdminMonitoringPage = lazy(() => import("./admin/pages/AdminMonitoringPage"));
 const AdminAuditLogPage = lazy(() => import("./admin/pages/AdminAuditLogPage"));
 const AdminLeadsList = lazy(() => import("./admin/pages/AdminLeadsList"));
-const AdminLeadDetail = lazy(() => import("./admin/pages/AdminLeadDetail"));
 const AdminNotFound = lazy(() => import("./admin/pages/AdminNotFound"));
 
 function RouteLoader() {
@@ -144,6 +143,11 @@ function LazyElement({ Component, ...props }) {
       <Component {...props} />
     </Suspense>
   );
+}
+
+function AdminLeadDetailRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/admin/leads?lead=${encodeURIComponent(id || "")}`} replace />;
 }
 
 function LegacyPatientsRedirect() {
@@ -298,7 +302,7 @@ export default function App() {
             <Route path="monitoring" element={<LazyElement Component={AdminMonitoringPage} />} />
             <Route path="audit-log" element={<LazyElement Component={AdminAuditLogPage} />} />
             <Route path="leads" element={<LazyElement Component={AdminLeadsList} />} />
-            <Route path="leads/:id" element={<LazyElement Component={AdminLeadDetail} />} />
+            <Route path="leads/:id" element={<AdminLeadDetailRedirect />} />
             <Route path="*" element={<LazyElement Component={AdminNotFound} />} />
           </Route>
         </Route>

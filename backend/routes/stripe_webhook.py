@@ -14,12 +14,13 @@ from fastapi.responses import JSONResponse
 
 from backend.billing_pg import (
     clear_subscription,
+    get_tenant_suspension,
     set_stripe_metered_item_id,
-    try_acquire_stripe_event,
+    set_tenant_unsuspended,
     tenant_id_by_stripe_customer_id,
+    try_acquire_stripe_event,
     update_billing_status,
     upsert_billing_from_subscription,
-    set_tenant_unsuspended,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,36 @@ def _get_ts(ob: object, key: str) -> datetime | None:
         except Exception:
             return None
     return None
+
+
+def _object_value(obj: object, key: str):
+    """Lit une propriété depuis un StripeObject ou un dict."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _stripe_id(value: object) -> str:
+    """Normalise un id Stripe fourni comme chaîne, dict ou StripeObject."""
+    if isinstance(value, str):
+        return value.strip()
+    value_id = _object_value(value, "id") if value is not None else None
+    return value_id.strip() if isinstance(value_id, str) else ""
+
+
+def _invoice_subscription_id(invoice: object) -> str:
+    """
+    Extrait la subscription d'une invoice.
+
+    Supporte à la fois invoice.subscription (API déjà utilisée par le projet)
+    et parent.subscription_details.subscription (versions Stripe récentes).
+    """
+    subscription_id = _stripe_id(_object_value(invoice, "subscription"))
+    if subscription_id:
+        return subscription_id
+    parent = _object_value(invoice, "parent")
+    subscription_details = _object_value(parent, "subscription_details") if parent else None
+    return _stripe_id(_object_value(subscription_details, "subscription")) if subscription_details else ""
 
 
 def _sync_subscription(subscription: object) -> bool:
@@ -238,6 +269,57 @@ def _get_metered_subscription_item_id(subscription: object) -> str | None:
     return fallback_item_id
 
 
+def _handle_invoice_paid(invoice: object) -> bool:
+    """
+    Resynchronise la subscription liée à une invoice payée.
+
+    La suspension n'est levée que si Stripe confirme une subscription active
+    ou trialing, et uniquement si elle avait été posée pour past_due.
+    """
+    customer_id = _stripe_id(_object_value(invoice, "customer"))
+    if not customer_id:
+        return False
+    tenant_id = tenant_id_by_stripe_customer_id(customer_id)
+    if tenant_id is None:
+        logger.info("invoice.paid: no tenant for customer %s", customer_id[:20])
+        return False
+
+    subscription_id = _invoice_subscription_id(invoice)
+    if not subscription_id:
+        logger.info("invoice.paid: no subscription on invoice for tenant_id=%s", tenant_id)
+        return False
+
+    try:
+        subscription = _retrieve_subscription_with_items(subscription_id)
+    except Exception as e:
+        logger.warning("invoice.paid subscription re-fetch failed sub=%s: %s", subscription_id, e)
+        return False
+
+    synced = _sync_subscription(subscription)
+    status = (_object_value(subscription, "status") or "").strip()
+    if not synced or status not in ("active", "trialing"):
+        logger.info(
+            "invoice.paid: subscription not eligible for recovery tenant_id=%s status=%s synced=%s",
+            tenant_id,
+            status or "unknown",
+            synced,
+        )
+        return synced
+
+    is_suspended, suspension_reason, _mode = get_tenant_suspension(tenant_id)
+    if is_suspended and suspension_reason == "past_due":
+        set_tenant_unsuspended(tenant_id)
+        from backend.log_events import TENANT_UNSUSPENDED_STRIPE_PAYMENT
+
+        logger.info(
+            "TENANT_UNSUSPENDED_STRIPE_PAYMENT tenant_id=%s status=%s",
+            tenant_id,
+            status,
+            extra={"event": TENANT_UNSUSPENDED_STRIPE_PAYMENT},
+        )
+    return True
+
+
 @router.post("/api/stripe/webhook")
 async def stripe_webhook(request: Request):
     """
@@ -306,7 +388,8 @@ async def stripe_webhook(request: Request):
                     if tenant_id is not None:
                         clear_subscription(tenant_id, set_status_canceled=True)
         elif typ == "invoice.paid":
-            pass  # optional: last_paid_at
+            if obj:
+                _handle_invoice_paid(obj)
         elif typ == "invoice.payment_failed":
             if obj and getattr(obj, "customer", None):
                 cid = getattr(obj.customer, "id", None) or obj.customer
