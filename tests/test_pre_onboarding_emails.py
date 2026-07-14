@@ -92,3 +92,30 @@ def test_callback_booking_sends_founder_and_prospect_emails(
     mock_prospect_cb.assert_called_once()
     assert mock_prospect_cb.call_args.kwargs["callback_date_iso"] == "2026-05-23"
     assert mock_prospect_cb.call_args.kwargs["callback_slot"] == "10h00"
+
+
+def test_callback_booking_founder_email_builds_and_sends_without_datetime_error():
+    from backend.services.email_service import send_lead_callback_booking_email
+
+    env = {
+        "FOUNDER_EMAIL": "founder@test.fr",
+        "ADMIN_BASE_URL": "https://www.uwiapp.com",
+        "POSTMARK_SERVER_TOKEN": "pm_test",
+        "EMAIL_FROM": "noreply@test.fr",
+    }
+    with patch.dict(os.environ, env, clear=False), patch(
+        "backend.services.email_service._send_via_postmark",
+        return_value=(True, None),
+    ) as mock_send:
+        ok, error = send_lead_callback_booking_email(
+            lead_id="lead-callback-1",
+            assistant_name="Emma",
+            callback_date_iso="2026-07-15",
+            callback_slot="10h00",
+            callback_phone="0612345678",
+            dashboard_base_url="https://www.uwiapp.com",
+        )
+
+    assert ok is True
+    assert error is None
+    mock_send.assert_called_once()

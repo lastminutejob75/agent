@@ -9,6 +9,7 @@ import logging
 import os
 import smtplib
 import html
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any, Dict, Optional, Tuple
