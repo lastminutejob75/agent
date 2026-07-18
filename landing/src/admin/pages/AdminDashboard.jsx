@@ -3,7 +3,7 @@
  * Cf. CdC : 7 KPI, leads, actions prioritaires, watchlist, panneau contexte.
  * Style inline + tokens theme (pas Tailwind).
  */
-import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Building2,
@@ -24,8 +24,6 @@ import {
   getAdminDashboardBundle,
 } from "../../lib/adminApi.js";
 import { T, radius, shadow, font, keyframes } from "../theme.js";
-
-const CreateTenantModal = lazy(() => import("../components/CreateTenantModal.jsx"));
 
 const NAVY = "#071A33";
 const CDC_BG = "#F4F8FA";
@@ -402,7 +400,6 @@ export default function AdminDashboard() {
   const [fetchError, setFetchError] = useState(null);
   const [isSampleMode, setIsSampleMode] = useState(false);
   const [severityFilter, setSeverityFilter] = useState("all");
-  const [showCreate, setShowCreate] = useState(false);
   const [deletingLeadId, setDeletingLeadId] = useState(null);
   const [selection, setSelection] = useState({ kind: "kpi", id: "alerts" });
 
@@ -580,7 +577,7 @@ export default function AdminDashboard() {
         tone: "red",
         Icon: AlertTriangle,
       },
-    ];
+    ].filter((card) => ["clients", "calls", "minutes", "alerts"].includes(card.id));
   }, [kpis]);
 
   const leadsBlock = pickLeadsBlock(summary, null);
@@ -609,8 +606,8 @@ export default function AdminDashboard() {
         primaryLabel: "Ouvrir",
         primaryTo: selectedKpi.route,
         secondaryLabel: "Créer un client",
-        secondaryTo: null,
-        onSecondary: () => setShowCreate(true),
+        secondaryTo: "/admin/tenants/new",
+        onSecondary: null,
       };
     }
     if (selection.kind === "lead" && selection.lead) {
@@ -629,7 +626,7 @@ export default function AdminDashboard() {
           .filter(Boolean)
           .join("\n"),
         primaryLabel: "Ouvrir le lead",
-        primaryTo: id ? `/admin/leads/${id}` : "/admin/leads",
+        primaryTo: id ? `/admin/leads?lead=${encodeURIComponent(id)}` : "/admin/leads",
         secondaryLabel: "Tous les leads",
         secondaryTo: "/admin/leads",
         onSecondary: null,
@@ -775,7 +772,7 @@ export default function AdminDashboard() {
             </button>
             <button
               type="button"
-              onClick={() => setShowCreate(true)}
+              onClick={() => navigate("/admin/tenants/new")}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -842,7 +839,7 @@ export default function AdminDashboard() {
           </div>
         ) : null}
 
-        {/* 7 KPI */}
+        {/* Indicateurs essentiels */}
         <section
           style={{
             display: "grid",
@@ -852,7 +849,7 @@ export default function AdminDashboard() {
           }}
         >
           {loading
-            ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
+            ? Array.from({ length: 4 }).map((_, i) => <KpiSkeleton key={i} />)
             : kpiCards.map((card) => {
                 const active = selection.kind === "kpi" && selection.id === card.id;
                 const s = toneSurface(card.tone);
@@ -861,7 +858,7 @@ export default function AdminDashboard() {
                   <button
                     key={card.id}
                     type="button"
-                    onClick={() => setSelection({ kind: "kpi", id: card.id })}
+                    onClick={() => navigate(card.route)}
                     style={{
                       textAlign: "left",
                       padding: 16,
@@ -1336,17 +1333,6 @@ export default function AdminDashboard() {
         </section>
       </div>
 
-      {showCreate ? (
-        <Suspense fallback={null}>
-          <CreateTenantModal
-            onClose={() => setShowCreate(false)}
-            onCreated={() => {
-              setShowCreate(false);
-              load();
-            }}
-          />
-        </Suspense>
-      ) : null}
     </>
   );
 }

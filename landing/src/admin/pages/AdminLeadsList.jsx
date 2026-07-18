@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Trash2 } from "lucide-react";
 import { adminApi } from "../../lib/adminApi.js";
 import { getLeadsSummary, listAdminLeads } from "../../lib/adminLeadsApi.js";
-import { applySearchParamsUpdates, kpiQueryUpdates } from "../../lib/adminLeadsFilters.js";
+import { applySearchParamsUpdates } from "../../lib/adminLeadsFilters.js";
 
 const BRAND = {
   teal: "#009CA4",
@@ -44,6 +44,19 @@ const PIPELINE = [
   { id: "converted", label: "Converti" },
   { id: "lost", label: "Perdu" },
 ];
+
+const SEGMENT_LABELS = {
+  Tous: "Tous",
+  grand_account: "Grands comptes",
+  high: "Priorité haute",
+  solo_practitioner: "Praticiens seuls",
+  without_assistant: "Sans secrétariat",
+  standard: "Standard",
+};
+
+function segmentLabel(segment) {
+  return SEGMENT_LABELS[segment] || String(segment || "Standard").replace(/_/g, " ");
+}
 
 function tone(kind, filled = false) {
   const map = {
@@ -99,44 +112,6 @@ function Pill({ children, variant = "gray", filled = false }) {
   );
 }
 
-function KpiCard({ label, value, detail, variant, icon, onClick, active = false }) {
-  const clickable = typeof onClick === "function";
-  return (
-    <button
-      type="button"
-      onClick={clickable ? onClick : undefined}
-      style={{
-        borderRadius: 22,
-        border: `1px solid ${active ? BRAND.teal : BRAND.border}`,
-        background: active ? "#F7FEFE" : "#fff",
-        padding: 14,
-        textAlign: "left",
-        cursor: clickable ? "pointer" : "default",
-        transition: "transform 0.12s ease, box-shadow 0.12s ease",
-        boxShadow: active ? "0 6px 20px rgba(0,156,164,0.12)" : "none",
-      }}
-      onMouseEnter={(e) => {
-        if (!clickable) return;
-        e.currentTarget.style.transform = "translateY(-1px)";
-      }}
-      onMouseLeave={(e) => {
-        if (!clickable) return;
-        e.currentTarget.style.transform = "translateY(0)";
-      }}
-    >
-      <div style={{ marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ ...tone(variant), display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 12, border: "1px solid", fontWeight: 800 }}>
-          {icon}
-        </span>
-        <span style={{ fontSize: 10, fontWeight: 800, color: "#98A2B3", textTransform: "uppercase" }}>30j</span>
-      </div>
-      <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.muted }}>{label}</div>
-      <div style={{ marginTop: 3, fontSize: 28, fontWeight: 900, letterSpacing: "-0.04em", color: BRAND.navy }}>{value}</div>
-      <div style={{ marginTop: 2, fontSize: 11, fontWeight: 700, color: BRAND.muted }}>{detail}</div>
-    </button>
-  );
-}
-
 function sanitizeForDisplay(lead) {
   const status = String(lead.status || "new");
   const score = Number(lead.score || 0);
@@ -181,8 +156,10 @@ export default function AdminLeadsList() {
   const [summary, setSummary] = useState(null);
   const [pipelineCounts, setPipelineCounts] = useState({});
   const [leads, setLeads] = useState([]);
+  const [total, setTotal] = useState(0);
   const [selectedLeadId, setSelectedLeadId] = useState(searchParams.get("lead") || "");
   const [segment, setSegment] = useState(searchParams.get("segment") || "Tous");
+  const [searchDraft, setSearchDraft] = useState(searchParams.get("search") || "");
   const [sort, setSort] = useState(searchParams.get("sort") || "created_desc");
   const [convertMode, setConvertMode] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -217,6 +194,19 @@ export default function AdminLeadsList() {
   const limit = Number(searchParams.get("limit") || 25);
   const followUpToday = searchParams.get("follow_up") === "today";
   const targetLeadId = searchParams.get("lead") || "";
+  const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)));
+
+  useEffect(() => {
+    setSearchDraft(query);
+  }, [query]);
+
+  useEffect(() => {
+    if (searchDraft === query) return undefined;
+    const timer = window.setTimeout(() => {
+      setQuery({ search: searchDraft || null, page: 1 });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft, query]);
 
   useEffect(() => {
     function onResize() {
@@ -254,6 +244,7 @@ export default function AdminLeadsList() {
         setSummary(sumRes);
         setPipelineCounts(listRes.pipeline || {});
         setLeads(mapped);
+        setTotal(listRes.total || 0);
         setSelectedLeadId((prev) => {
           if (targetLeadId && mapped.some((x) => String(x.id) === targetLeadId)) return targetLeadId;
           return prev && mapped.some((x) => String(x.id) === prev) ? prev : String(mapped[0]?.id || "");
@@ -262,6 +253,7 @@ export default function AdminLeadsList() {
         if (cancelled) return;
         setError(e?.message || "Impossible de charger les leads");
         setLeads([]);
+        setTotal(0);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -609,83 +601,17 @@ export default function AdminLeadsList() {
           </div>
         </header>
 
-        <section style={{ marginBottom: 14, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
-          <KpiCard
-            label="Nouveaux"
-            value={stats.newCount}
-            detail="à qualifier"
-            icon="✧"
-            variant="teal"
-            onClick={() => setQuery(kpiQueryUpdates("new"))}
-            title="Filtrer les leads nouveaux"
-            active={stage === "new"}
-          />
-          <KpiCard
-            label="À contacter"
-            value={stats.toContact}
-            detail="action commerciale"
-            icon="☎"
-            variant="orange"
-            onClick={() => setQuery(kpiQueryUpdates("to_contact"))}
-            title="Filtrer les leads à contacter"
-            active={stage === "to_contact"}
-          />
-          <KpiCard
-            label="Démo prévue"
-            value={stats.demos}
-            detail="à préparer"
-            icon="□"
-            variant="purple"
-            onClick={() => setQuery(kpiQueryUpdates("demo"))}
-            title="Filtrer les leads avec démo prévue"
-            active={stage === "demo"}
-          />
-          <KpiCard
-            label="Essais gratuits"
-            value={stats.trial}
-            detail="convertibles"
-            icon="◉"
-            variant="yellow"
-            onClick={() => setQuery(kpiQueryUpdates("trial"))}
-            title="Filtrer les leads en essai gratuit"
-            active={stage === "trial"}
-          />
-          <KpiCard
-            label="Priorité haute"
-            value={stats.high}
-            detail="leads chauds"
-            icon="🔥"
-            variant="red"
-            onClick={() => {
-              setSegment("high");
-              setQuery({ segment: "high", page: 1 });
-            }}
-            title="Afficher les leads haute priorité"
-            active={segment === "high"}
-          />
-          <KpiCard
-            label="Score moyen"
-            value={stats.avg}
-            detail="potentiel"
-            icon="✓"
-            variant="green"
-            onClick={() => {
-              setSegment("Tous");
-              setSort("created_desc");
-              setQuery({ ...kpiQueryUpdates("reset"), segment: null, sort: "created_desc" });
-            }}
-            title="Réinitialiser les filtres"
-            active={stage === "all" && segment === "Tous" && !query && !followUpToday}
-          />
-        </section>
-
         <section style={{ marginBottom: 12, borderRadius: 22, border: `1px solid ${BRAND.border}`, background: "#fff", padding: 12 }}>
           <div style={{ marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div>
               <div style={{ fontWeight: 900, fontSize: 18, color: BRAND.navy }}>Pipeline</div>
               <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted }}>Lead → qualification → essai gratuit → cabinet créé</div>
             </div>
-            <Pill variant="teal">{leads.length} résultat(s)</Pill>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+              <Pill variant="teal">{total} résultat(s)</Pill>
+              <Pill variant="gray">Score moyen {stats.avg}</Pill>
+              {stats.high > 0 ? <Pill variant="red">{stats.high} priorité haute</Pill> : null}
+            </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
             {displayedPipeline.map((item) => {
@@ -717,8 +643,8 @@ export default function AdminLeadsList() {
             <div style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${BRAND.border}`, background: "#F8FBFC", borderRadius: 14, padding: "10px 12px" }}>
               <span style={{ color: "#98A2B3" }}>⌕</span>
               <input
-                value={query}
-                onChange={(e) => setQuery({ search: e.target.value || null, page: 1 })}
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
                 placeholder="Rechercher cabinet, praticien, ville, douleur, source..."
                 style={{ width: "100%", border: "none", outline: "none", background: "transparent", fontWeight: 700, color: BRAND.navy, fontSize: 13 }}
               />
@@ -742,7 +668,7 @@ export default function AdminLeadsList() {
                     cursor: "pointer",
                   }}
                 >
-                  {s === "Tous" ? "Tous" : s.replace(/_/g, " ")}
+                  {segmentLabel(s)}
                 </button>
               ))}
             </div>
@@ -765,13 +691,15 @@ export default function AdminLeadsList() {
           {(stage !== "all" || segment !== "Tous" || query || followUpToday) ? (
             <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", position: "sticky", top: 4, zIndex: 2, background: "#fff", paddingTop: 2 }}>
               {stage !== "all" ? <Pill variant="teal">Statut: {stage.replace(/_/g, " ")}</Pill> : null}
-              {segment !== "Tous" ? <Pill variant="purple">Segment: {segment.replace(/_/g, " ")}</Pill> : null}
+              {segment !== "Tous" ? <Pill variant="purple">Segment: {segmentLabel(segment)}</Pill> : null}
               {query ? <Pill variant="blue">Recherche: {query}</Pill> : null}
               {followUpToday ? <Pill variant="orange">Relances du jour</Pill> : null}
               <button
                 onClick={() => {
                   setSegment("Tous");
-                  setQuery({ status: null, search: null, follow_up: null, page: 1 });
+                  setSort("created_desc");
+                  setSearchDraft("");
+                  setQuery({ status: null, search: null, segment: null, sort: "created_desc", follow_up: null, page: 1 });
                 }}
                 style={{ marginLeft: "auto", borderRadius: 999, border: `1px solid ${BRAND.border}`, background: "#fff", padding: "5px 10px", fontWeight: 800, fontSize: 11, cursor: "pointer" }}
               >
@@ -792,9 +720,12 @@ export default function AdminLeadsList() {
             {importReport.errors?.length ? ` ${importReport.errors.join(" · ")}` : ""}
           </div>
         ) : null}
-        <div style={{ marginBottom: 12, borderRadius: 12, border: `1px solid ${BRAND.border}`, background: "#fff", padding: "8px 10px", color: BRAND.muted, fontSize: 11, fontWeight: 700 }}>
-          Import CSV attendu : colonnes `cabinet,contact,email,phone,profession,city,calls_per_day,status,source,pain_point,next_action,next_action_at`.
-        </div>
+        <details style={{ marginBottom: 12, borderRadius: 12, border: `1px solid ${BRAND.border}`, background: "#fff", padding: "8px 10px", color: BRAND.muted, fontSize: 11, fontWeight: 700 }}>
+          <summary style={{ cursor: "pointer", color: BRAND.navy }}>Format attendu pour l’import CSV</summary>
+          <div style={{ marginTop: 8, lineHeight: 1.5 }}>
+            Colonnes : `cabinet,contact,email,phone,profession,city,calls_per_day,status,source,pain_point,next_action,next_action_at`.
+          </div>
+        </details>
 
         {loading ? (
           <div style={{ padding: 22, color: BRAND.muted, fontWeight: 700 }}>Chargement des leads…</div>
@@ -848,7 +779,7 @@ export default function AdminLeadsList() {
                     <div style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
                       <Pill variant={statusTone(lead.status)}>{lead.statusLabel}</Pill>
                       <Pill variant={priorityTone(lead.priority)}>{lead.priority === "high" ? "Priorité haute" : lead.priority === "medium" ? "Priorité moyenne" : "Priorité basse"}</Pill>
-                      <Pill variant={lead.segment === "grand_account" ? "yellow" : "gray"}>{lead.segment}</Pill>
+                      <Pill variant={lead.segment === "grand_account" ? "yellow" : "gray"}>{segmentLabel(lead.segment)}</Pill>
                     </div>
                     <div style={{ marginBottom: 8, display: "grid", gridTemplateColumns: isNarrow ? "1fr 1fr" : "repeat(3,minmax(0,1fr))", gap: 6 }}>
                       <MiniInfo label="Source" value={lead.source} />
@@ -924,6 +855,45 @@ export default function AdminLeadsList() {
             )}
           </div>
         )}
+        {!loading && total > 0 ? (
+          <nav
+            aria-label="Pagination des prospects"
+            style={{
+              marginTop: 14,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              borderRadius: 16,
+              border: `1px solid ${BRAND.border}`,
+              background: "#fff",
+              padding: "10px 12px",
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.muted }}>
+              Page {page} sur {totalPages} · {total} prospect{total > 1 ? "s" : ""}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setQuery({ page: Math.max(1, page - 1), lead: null })}
+                style={{ ...paginationButtonStyle, opacity: page <= 1 ? 0.45 : 1 }}
+              >
+                Précédent
+              </button>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setQuery({ page: Math.min(totalPages, page + 1), lead: null })}
+                style={{ ...paginationButtonStyle, opacity: page >= totalPages ? 0.45 : 1 }}
+              >
+                Suivant
+              </button>
+            </div>
+          </nav>
+        ) : null}
       </div>
       {showCreateModal ? (
         <div
@@ -1069,7 +1039,7 @@ function DetailPanel({ lead, convertMode, setConvertMode, onStatusChange, onDele
           <div style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
             <Pill variant={statusTone(lead.status)}>{lead.statusLabel}</Pill>
             <Pill variant={priorityTone(lead.priority)}>{lead.priority === "high" ? "Priorité haute" : lead.priority}</Pill>
-            <Pill variant="gray">{lead.segment}</Pill>
+            <Pill variant="gray">{segmentLabel(lead.segment)}</Pill>
           </div>
           <div style={{ fontSize: isNarrow ? 24 : 28, lineHeight: 1.1, fontWeight: 900, letterSpacing: "-0.04em" }}>{lead.cabinet}</div>
           <div style={{ marginTop: 2, fontSize: 12, fontWeight: 700, opacity: 0.8 }}>{lead.contact} {lead.role ? `· ${lead.role}` : ""}</div>
@@ -1102,7 +1072,7 @@ function DetailPanel({ lead, convertMode, setConvertMode, onStatusChange, onDele
             <Info label="Email" value={lead.email} />
             <Info label="Téléphone" value={lead.callback_phone || lead.phone || "—"} />
             <Info label="Ville" value={lead.city || "—"} />
-            <Info label="Type" value={lead.segment} />
+            <Info label="Type" value={segmentLabel(lead.segment)} />
             <Info label="Source" value={lead.source} />
             <Info label="Potentiel" value={lead.priority === "high" ? "Très élevée" : "Élevée"} />
           </div>
@@ -1201,6 +1171,16 @@ const inputStyle = {
   fontWeight: 700,
   color: BRAND.navy,
   outline: "none",
+};
+
+const paginationButtonStyle = {
+  borderRadius: 10,
+  border: `1px solid ${BRAND.border}`,
+  background: "#fff",
+  color: BRAND.navy,
+  padding: "8px 12px",
+  fontWeight: 800,
+  cursor: "pointer",
 };
 
 function Info({ label, value }) {

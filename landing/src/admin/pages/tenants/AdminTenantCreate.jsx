@@ -441,14 +441,26 @@ export default function AdminTenantCreate() {
   }
 
   return (
-    <div style={{ padding: "28px 32px", background: C.bg, minHeight: "100vh" }}>
+    <div className="uwi-create-tenant-page" style={{ padding: "28px 32px", background: C.bg, minHeight: "100vh" }}>
+      <style>{`
+        .uwi-create-tenant-layout { display:grid; grid-template-columns:minmax(260px,300px) minmax(0,1fr); gap:24px; align-items:start; }
+        @media (max-width: 900px) {
+          .uwi-create-tenant-page { padding:18px 16px 28px !important; }
+          .uwi-create-tenant-layout { grid-template-columns:minmax(0,1fr); gap:16px; }
+          .uwi-create-tenant-stepper { overflow-x:auto; }
+        }
+        @media (max-width: 520px) {
+          .uwi-create-tenant-page { padding:14px 12px 24px !important; }
+          .uwi-create-tenant-form { padding:16px !important; border-radius:18px !important; }
+        }
+      `}</style>
       <Link to="/admin/tenants" style={{ color: C.muted, marginBottom: 12, display: "inline-block", fontWeight: 700 }}>
         ← Clients
       </Link>
 
       <header style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 16, marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 900, color: C.text, letterSpacing: -0.6, margin: 0 }}>Créer un cabinet</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 900, color: C.text, letterSpacing: -0.6, margin: 0 }}>Créer un client</h1>
           <p style={{ marginTop: 8, maxWidth: 560, fontSize: 14, color: C.muted, fontWeight: 500, lineHeight: 1.55 }}>
             Parcours en {CREATION_STEP_LABELS.length} étapes : identité, offre, canaux, assistant, agenda, règles d’accueil, accès client puis validation.
           </p>
@@ -485,9 +497,9 @@ export default function AdminTenantCreate() {
         </div>
       ) : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 300px) 1fr", gap: 24, alignItems: "start" }}>
-        <CreateTenantStepper step={step} onStep={setStep} />
-        <section style={{ borderRadius: 26, border: `1px solid ${C.border}`, background: C.card, padding: 22, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+      <div className="uwi-create-tenant-layout">
+        <div className="uwi-create-tenant-stepper"><CreateTenantStepper step={step} onStep={setStep} /></div>
+        <section className="uwi-create-tenant-form" style={{ borderRadius: 26, border: `1px solid ${C.border}`, background: C.card, padding: 22, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <div style={{ marginBottom: 18 }}>
             <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.14em", color: T.teal }}>ÉTAPE {step + 1}</div>
             <h2 style={{ margin: "6px 0 0", fontSize: 22, fontWeight: 900, color: C.text }}>{CREATION_STEP_LABELS[step]}</h2>

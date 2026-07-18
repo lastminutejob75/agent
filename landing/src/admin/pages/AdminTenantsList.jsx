@@ -663,6 +663,7 @@ export default function AdminTenantsList() {
   const [isSampleMode, setIsSampleMode] = useState(false);
   const [listTotal, setListTotal] = useState(null);
   const [activityByTenant, setActivityByTenant] = useState({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const legacyStatus = (searchParams.get("status") || "").toLowerCase();
   const filterParam = (searchParams.get("filter") || "").toLowerCase();
@@ -793,7 +794,6 @@ export default function AdminTenantsList() {
 
         const raw = listRes?.tenants ?? listRes;
         let next = Array.isArray(raw) ? raw : [];
-        let sample = false;
 
         const bMap = {};
         if (overviewRes?.tenants && Array.isArray(overviewRes.tenants)) {
@@ -881,29 +881,21 @@ export default function AdminTenantsList() {
               });
           }
         } else {
-          const demoRows = SAMPLE_TENANTS_EXTENDED;
-          const demoBilling = buildSampleBillingMap(demoRows);
-          const demoSummary = buildDemoSummary(demoRows, demoBilling);
-          setTenants(demoRows);
-          setIsSampleMode(true);
-          sample = true;
-          setBillingMap(demoBilling);
-          setSummary(demoSummary);
+          setTenants([]);
+          setIsSampleMode(false);
+          setBillingMap({});
+          setSummary(null);
           setActivityByTenant({});
-          setListTotal(null);
         }
       } catch (e) {
         if (cancelled) return;
         setErr(e?.message ?? e?.data?.detail ?? String(e) ?? "Erreur de chargement");
         setErrStatus(e?.status);
-        const demoRows = SAMPLE_TENANTS_EXTENDED;
-        const demoBilling = buildSampleBillingMap(demoRows);
-        const demoSummary = buildDemoSummary(demoRows, demoBilling);
-        setTenants(demoRows);
-        setIsSampleMode(true);
+        setTenants([]);
+        setIsSampleMode(false);
         setListTotal(null);
-        setBillingMap(demoBilling);
-        setSummary(demoSummary);
+        setBillingMap({});
+        setSummary(null);
         setActivityByTenant({});
       } finally {
         if (!cancelled) setLoading(false);
@@ -1239,10 +1231,10 @@ export default function AdminTenantsList() {
             <span>◎</span> Admin · Clients
           </div>
           <h1 className="uwi-head-title" style={{ fontSize: 30, fontWeight: 900, color: BRAND.navy, letterSpacing: "-0.04em", margin: 0 }}>
-            Cabinets clients
+            Clients
           </h1>
           <p className="uwi-head-subtitle" style={{ marginTop: 10, maxWidth: 720, fontSize: 15, fontWeight: 500, color: BRAND.muted, lineHeight: 1.55 }}>
-            Annuaire de pilotage des tenants UWi : statut, abonnement, consommation, activité, alertes et accès aux fiches détaillées.
+            Retrouvez rapidement un client, son statut, son activité et les actions à mener.
           </p>
           <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
             {!forcedDemoExamples ? (
@@ -1261,7 +1253,7 @@ export default function AdminTenantsList() {
                     cursor: "pointer",
                   }}
                 >
-                  Prévisualiser avec exemples (~96 cabinets)
+                  Voir des données d’exemple
                 </button>
                 <span className="uwi-demo-hint" style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted }}>
                   Ou ajoutez <span style={{ fontWeight: 800, color: BRAND.navy }}>?demo=1</span> dans l’URL.
@@ -1303,7 +1295,7 @@ export default function AdminTenantsList() {
             textDecoration: "none",
           }}
         >
-          <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> Ajouter un cabinet
+          <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> Créer un client
         </Link>
       </div>
 
@@ -1423,10 +1415,7 @@ export default function AdminTenantsList() {
               ["Tous", "all"],
               ["Actif", "active"],
               ["À configurer", "onboarding"],
-              ["Suspendus", "suspended"],
-              ["Essai gratuit", "trial"],
               ["Alertes", "alerts"],
-              ["Quota élevé", "quota_high"],
             ].map(([label, key]) => {
               const on = effectiveFilter === key;
               return (
@@ -1458,6 +1447,55 @@ export default function AdminTenantsList() {
               );
             })}
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((value) => !value)}
+            aria-expanded={showAdvanced}
+            style={{
+              padding: "9px 14px",
+              borderRadius: 16,
+              border: `1px solid ${BRAND.border}`,
+              background: showAdvanced ? BRAND.softTeal : "#fff",
+              color: showAdvanced ? BRAND.tealDark : BRAND.navy,
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: "pointer",
+            }}
+          >
+            {showAdvanced ? "Masquer les options" : "Options avancées"}
+          </button>
+
+          {showAdvanced ? (
+            <>
+              <div className="uwi-filter-pills" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {[
+                  ["Suspendus", "suspended"],
+                  ["Essai gratuit", "trial"],
+                  ["Quota élevé", "quota_high"],
+                ].map(([label, key]) => {
+                  const on = effectiveFilter === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setQuery({ filter: key, status: null, page: "1", limit: null })}
+                      style={{
+                        padding: "9px 14px",
+                        borderRadius: 16,
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        border: `1px solid ${on ? BRAND.navy : BRAND.border}`,
+                        background: on ? BRAND.navy : "#F2F4F7",
+                        color: on ? "#fff" : BRAND.muted,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
 
           <select
             className="uwi-sort-select"
@@ -1544,6 +1582,8 @@ export default function AdminTenantsList() {
               <option value="all">Tout charger (peut être lent)</option>
             </select>
           </label>
+            </>
+          ) : null}
         </div>
         {typeof explicitLimit === "number" && !paginationAllowed ? (
           <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600, color: T.orange }}>

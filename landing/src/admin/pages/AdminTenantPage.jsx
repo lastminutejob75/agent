@@ -39,18 +39,29 @@ const C = {
 
 const TABS = [
   { id: "overview", label: "Vue d'ensemble", icon: "▦" },
-  { id: "requests", label: "Demandes patients", icon: "✦" },
-  { id: "calls", label: "Appels", icon: "☎" },
-  { id: "agenda", label: "RDV / Agenda", icon: "□" },
-  { id: "assistant", label: "Assistant", icon: "✧" },
-  { id: "phone", label: "Téléphonie", icon: "☎" },
-  { id: "public", label: "Page publique", icon: "◇" },
-  { id: "billing", label: "Billing", icon: "€" },
-  { id: "access", label: "Accès client", icon: "●" },
-  { id: "timeline", label: "Timeline", icon: "◷" },
-  { id: "faq", label: "Règles d'accueil / FAQ", icon: "💬" },
-  { id: "advanced", label: "Configuration", icon: "⚙" },
+  { id: "activity", label: "Activité", icon: "☎" },
+  { id: "configuration", label: "Configuration", icon: "⚙" },
+  { id: "billing", label: "Facturation", icon: "€" },
+  { id: "history", label: "Historique", icon: "◷" },
 ];
+
+const TAB_ALIASES = {
+  requests: "activity",
+  calls: "activity",
+  agenda: "configuration",
+  assistant: "configuration",
+  phone: "configuration",
+  public: "configuration",
+  access: "overview",
+  timeline: "history",
+  faq: "configuration",
+  advanced: "configuration",
+};
+
+function normalizeTab(value) {
+  const requested = TAB_ALIASES[value] || value;
+  return TABS.some((tab) => tab.id === requested) ? requested : "overview";
+}
 
 function ServiceStatusBadge({ status }) {
   const map = {
@@ -134,6 +145,20 @@ function PageError({ msg, onRetry }) {
 
 function copyText(value) {
   navigator.clipboard?.writeText(String(value || "")).catch(() => {});
+}
+
+function compactActionStyle(background, color) {
+  return {
+    padding: "9px 12px",
+    borderRadius: 10,
+    border: `1px solid ${C.border}`,
+    background,
+    color,
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  };
 }
 
 function sanitizePhoneInput(value) {
@@ -1940,8 +1965,8 @@ export default function AdminTenantPage() {
   const { id } = useParams();
   const tenantId = id;
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState("overview");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTabState] = useState(() => normalizeTab(searchParams.get("tab")));
   const [tenant, setTenant] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [billing, setBilling] = useState(null);
@@ -1994,6 +2019,19 @@ export default function AdminTenantPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    setTabState(normalizeTab(searchParams.get("tab")));
+  }, [searchParams]);
+
+  const setTab = useCallback((nextTab) => {
+    const normalized = normalizeTab(nextTab);
+    const next = new URLSearchParams(searchParams);
+    if (normalized === "overview") next.delete("tab");
+    else next.set("tab", normalized);
+    setSearchParams(next, { replace: true });
+    setTabState(normalized);
+  }, [searchParams, setSearchParams]);
+
   const params = tenant?.params || {};
   const routing = tenant?.routing || [];
   const contactEmail = params.contact_email || tenant?.contact_email || "";
@@ -2002,11 +2040,11 @@ export default function AdminTenantPage() {
   const vapiAssistantId = params.vapi_assistant_id || "";
   const planKey = params.plan_key || billing?.plan_key || "growth";
   const activationSteps = [
-    { label: "Assistant", done: !!params.assistant_name, action: () => setTab("advanced") },
-    { label: "Vapi", done: !!vapiAssistantId, action: () => setTab("advanced") },
-    { label: "Numéro vocal", done: !!primaryDid, action: () => setTab("advanced") },
-    { label: "Agenda", done: technicalStatus?.calendar_status === "connected" || params.calendar_provider === "none", action: () => setTab("agenda") },
-    { label: "FAQ", done: true, action: () => setTab("faq") },
+    { label: "Assistant", done: !!params.assistant_name, action: () => setTab("configuration") },
+    { label: "Vapi", done: !!vapiAssistantId, action: () => setTab("configuration") },
+    { label: "Numéro vocal", done: !!primaryDid, action: () => setTab("configuration") },
+    { label: "Agenda", done: technicalStatus?.calendar_status === "connected" || params.calendar_provider === "none", action: () => setTab("configuration") },
+    { label: "FAQ", done: true, action: () => setTab("configuration") },
   ];
   const activationProgress = `${activationSteps.filter((step) => step.done).length}/${activationSteps.length}`;
 
@@ -2074,7 +2112,7 @@ export default function AdminTenantPage() {
         @keyframes uwi-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         @keyframes uwi-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
         ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
-        .uwi-tenant-bridge-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:24px; }
+        .uwi-tenant-bridge-grid { display:none; }
         @media (max-width: 1024px) {
           .uwi-tenant-wrap { padding: 18px 16px !important; }
           .uwi-tenant-header { flex-direction: column; align-items: stretch !important; gap: 12px !important; margin-bottom: 16px !important; }
@@ -2152,13 +2190,13 @@ export default function AdminTenantPage() {
                 fontFamily: "inherit",
               }}
             >
-              Dashboard
+              Tableau de bord
             </button>
           </div>
 
           <div style={{ flex: 1 }}>
             <h1 className="uwi-tenant-title" style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.8, marginBottom: 3 }}>
-              {tenant?.name ?? `Tenant #${tenantId}`}
+              {tenant?.name ?? `Client #${tenantId}`}
             </h1>
             <div className="uwi-tenant-meta" style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <ServiceStatusBadge status={dashboard?.service_status?.status} />
@@ -2182,6 +2220,51 @@ export default function AdminTenantPage() {
               ))}
             </div>
           )}
+        </div>
+
+        <div
+          style={{
+            marginBottom: 18,
+            padding: "12px 14px",
+            borderRadius: 14,
+            border: `1px solid ${C.border}`,
+            background: C.card,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: C.muted }}>
+              Activation <strong style={{ color: C.text }}>{activationProgress}</strong>
+            </span>
+            <span style={{ fontSize: 12, color: C.muted }}>
+              Plan <strong style={{ color: C.text }}>{String(planKey).replace(/^./, (char) => char.toUpperCase())}</strong>
+            </span>
+            <span style={{ fontSize: 12, color: C.muted }}>
+              Paiement <strong style={{ color: billing?.billing_status === "active" ? C.accent : C.warning }}>{billing?.billing_status || "Non synchronisé"}</strong>
+            </span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button type="button" onClick={openAsClient} disabled={bridgeLoading || demoPreview} style={compactActionStyle(C.accent, "#fff")}>
+              {bridgeLoading ? "Ouverture…" : "Voir comme le client"}
+            </button>
+            <button type="button" onClick={openClientLogin} disabled={demoPreview} style={compactActionStyle(C.surface, C.blue)}>
+              Connexion client
+            </button>
+            <button
+              type="button"
+              onClick={provisionAccess}
+              disabled={provisionLoading || demoPreview || !contactEmail}
+              style={compactActionStyle(C.surface, C.text)}
+            >
+              {provisionLoading ? "Envoi…" : "Renvoyer les accès"}
+            </button>
+          </div>
+          {bridgeError ? <div style={{ width: "100%", fontSize: 12, color: C.danger }}>{bridgeError}</div> : null}
+          {provisionMessage ? <div style={{ width: "100%", fontSize: 12, color: C.accent }}>{provisionMessage}</div> : null}
         </div>
 
         <div className="uwi-tenant-tabs-shell" style={{ overflowX: "auto", marginBottom: 24, borderBottom: `1px solid ${C.border}`, paddingBottom: 0 }}>
@@ -2291,7 +2374,7 @@ export default function AdminTenantPage() {
             actions={
               <button
                 type="button"
-                onClick={() => setTab("advanced")}
+                onClick={() => setTab("configuration")}
                 style={{
                   padding: "6px 10px",
                   borderRadius: 8,
@@ -2323,7 +2406,7 @@ export default function AdminTenantPage() {
             actions={
               <button
                 type="button"
-                onClick={() => setTab("calls")}
+                onClick={() => setTab("activity")}
                 style={{
                   padding: "6px 10px",
                   borderRadius: 8,
@@ -2356,7 +2439,7 @@ export default function AdminTenantPage() {
             actions={
               <button
                 type="button"
-                onClick={() => setTab("faq")}
+                onClick={() => setTab("configuration")}
                 style={{
                   padding: "6px 10px",
                   borderRadius: 8,
@@ -2404,13 +2487,49 @@ export default function AdminTenantPage() {
         </div>
 
         <div className="uwi-tenant-tab-content" style={{ animation: "uwi-fadein 0.3s ease both" }} key={tab}>
-          {tab === "overview" && <TabInfo tenant={tenant} dashboard={dashboard} />}
-          {tab === "requests" && (demoPreview ? <DemoTabNotice title="Demandes patients" /> : <TabPatientRequests tenantId={tenantId} />)}
-          {tab === "calls" && (demoPreview ? <DemoTabNotice title="Appels" /> : <TabCalls tenantId={tenantId} />)}
-          {tab === "agenda" && <TabAgendaMini tenant={tenant} technicalStatus={technicalStatus} />}
-          {tab === "assistant" && <TabAssistantMini tenant={tenant} technicalStatus={technicalStatus} />}
-          {tab === "phone" && <TabPhoneMini primaryDid={primaryDid} technicalStatus={technicalStatus} routingCount={routingCount} />}
-          {tab === "public" && <TabPublicMini tenant={tenant} />}
+          {tab === "overview" && (
+            <div style={{ display: "grid", gap: 20 }}>
+              <TabInfo tenant={tenant} dashboard={dashboard} />
+              <TabAccessClient
+                tenantId={tenantId}
+                contactEmail={contactEmail}
+                bridgeLoading={bridgeLoading}
+                bridgeError={bridgeError}
+                openAsClient={openAsClient}
+                openClientLogin={openClientLogin}
+                provisionAccess={provisionAccess}
+                provisionLoading={provisionLoading}
+                provisionMessage={provisionMessage}
+                demoPreview={demoPreview}
+              />
+            </div>
+          )}
+          {tab === "activity" &&
+            (demoPreview ? (
+              <DemoTabNotice title="Activité" />
+            ) : (
+              <div style={{ display: "grid", gap: 20 }}>
+                <TabPatientRequests tenantId={tenantId} />
+                <TabCalls tenantId={tenantId} />
+              </div>
+            ))}
+          {tab === "configuration" &&
+            (demoPreview ? (
+              <DemoTabNotice title="Configuration" />
+            ) : (
+              <div style={{ display: "grid", gap: 20 }}>
+                <Suspense fallback={<InlineLoader text="Chargement de la configuration…" />}>
+                  <AdminTenantActionsTab
+                    tenantId={tenantId}
+                    tenant={tenant}
+                    theme={C}
+                    onSaved={() => getTenant(tenantId).then(setTenant)}
+                    onDeleted={() => navigate("/admin/tenants")}
+                  />
+                </Suspense>
+                <TabFaq tenantId={tenantId} tenant={tenant} />
+              </div>
+            ))}
           {tab === "billing" &&
             (demoPreview ? (
               <DemoTabNotice title="Facturation / quotas" />
@@ -2420,36 +2539,7 @@ export default function AdminTenantPage() {
                 <TabInvoices tenantId={tenantId} />
               </div>
             ))}
-          {tab === "access" && (
-            <TabAccessClient
-              tenantId={tenantId}
-              contactEmail={contactEmail}
-              bridgeLoading={bridgeLoading}
-              bridgeError={bridgeError}
-              openAsClient={openAsClient}
-              openClientLogin={openClientLogin}
-              provisionAccess={provisionAccess}
-              provisionLoading={provisionLoading}
-              provisionMessage={provisionMessage}
-              demoPreview={demoPreview}
-            />
-          )}
-          {tab === "timeline" && (demoPreview ? <DemoTabNotice title="Timeline" /> : <TabTimeline tenantId={tenantId} />)}
-          {tab === "faq" && (demoPreview ? <DemoTabNotice title="FAQ" /> : <TabFaq tenantId={tenantId} tenant={tenant} />)}
-          {tab === "advanced" &&
-            (demoPreview ? (
-              <DemoTabNotice title="Configuration avancée" />
-            ) : (
-              <Suspense fallback={<InlineLoader text="Chargement des actions client…" />}>
-                <AdminTenantActionsTab
-                  tenantId={tenantId}
-                  tenant={tenant}
-                  theme={C}
-                  onSaved={() => getTenant(tenantId).then(setTenant)}
-                  onDeleted={() => navigate("/admin")}
-                />
-              </Suspense>
-            ))}
+          {tab === "history" && (demoPreview ? <DemoTabNotice title="Historique" /> : <TabTimeline tenantId={tenantId} />)}
         </div>
       </div>
     </div>

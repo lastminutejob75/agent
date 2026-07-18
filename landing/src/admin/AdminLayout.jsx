@@ -5,11 +5,9 @@ import {
   Users,
   UserPlus,
   AlertTriangle,
-  ShieldCheck,
   CreditCard,
   LogOut,
   Activity,
-  Radar,
   FileSearch,
   Menu,
   X,
@@ -33,19 +31,17 @@ const NAV_GROUPS = [
   {
     label: "Pilotage",
     items: [
-      { icon: LayoutDashboard, label: "Dashboard", path: "/admin", end: true },
+      { icon: LayoutDashboard, label: "Tableau de bord", path: "/admin", end: true },
       { icon: Users, label: "Clients", path: "/admin/tenants" },
-      { icon: UserPlus, label: "Leads", path: "/admin/leads", badgeKey: "newLeads" },
+      { icon: UserPlus, label: "Prospects", path: "/admin/leads", badgeKey: "newLeads" },
     ],
   },
   {
     label: "Exploitation",
     items: [
-      { icon: CreditCard, label: "Billing", path: "/admin/billing" },
-      { icon: AlertTriangle, label: "Operations", path: "/admin/operations" },
-      { icon: ShieldCheck, label: "Quality", path: "/admin/quality" },
-      { icon: Radar, label: "Monitoring", path: "/admin/monitoring" },
-      { icon: FileSearch, label: "Audit log", path: "/admin/audit-log" },
+      { icon: CreditCard, label: "Facturation", path: "/admin/billing" },
+      { icon: AlertTriangle, label: "Opérations", path: "/admin/operations" },
+      { icon: FileSearch, label: "Journal d’audit", path: "/admin/audit-log" },
     ],
   },
 ];
@@ -189,9 +185,28 @@ function NavGroup({ group, badges, currentPath, onNavigate }) {
   );
 }
 
-function SidebarFooter({ email, onLogout }) {
+function SidebarFooter({ email, onLogout, onNavigate }) {
   return (
     <div style={{ padding: "16px 20px", borderTop: `1px solid ${T.border}` }}>
+      <button
+        type="button"
+        onClick={() => onNavigate("/admin/tenants/new")}
+        style={{
+          width: "100%",
+          marginBottom: 12,
+          padding: "10px 12px",
+          border: "none",
+          borderRadius: radius.md,
+          background: T.teal,
+          color: "#fff",
+          cursor: "pointer",
+          fontFamily: font.body,
+          fontSize: 12,
+          fontWeight: 800,
+        }}
+      >
+        + Créer un client
+      </button>
       <div
         style={{
           display: "flex",
@@ -203,7 +218,7 @@ function SidebarFooter({ email, onLogout }) {
         }}
       >
         <Activity size={12} color={T.green} />
-        Systeme operationnel
+        Système opérationnel
       </div>
       <div
         style={{
@@ -214,7 +229,7 @@ function SidebarFooter({ email, onLogout }) {
           border: `1px solid ${T.border}`,
         }}
       >
-        <div style={{ fontSize: 10, color: T.textMuted, marginBottom: 2 }}>Connecte</div>
+        <div style={{ fontSize: 10, color: T.textMuted, marginBottom: 2 }}>Connecté</div>
         <div
           style={{
             fontSize: 12,
@@ -252,7 +267,7 @@ function SidebarFooter({ email, onLogout }) {
         onMouseLeave={(e) => (e.currentTarget.style.background = T.bgCard)}
       >
         <LogOut size={13} />
-        Deconnexion
+        Déconnexion
       </button>
     </div>
   );
@@ -273,7 +288,7 @@ function SidebarContent({ currentPath, badges, onNavigate, email, onLogout }) {
           />
         ))}
       </nav>
-      <SidebarFooter email={email} onLogout={onLogout} />
+      <SidebarFooter email={email} onLogout={onLogout} onNavigate={onNavigate} />
     </>
   );
 }
@@ -292,11 +307,20 @@ export default function AdminLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
-    adminApi
-      .leadsCountNew()
-      .then((r) => setNewLeadsCount(r?.count ?? 0))
-      .catch(() => {});
-  }, []);
+    const refreshLeadCount = () => {
+      adminApi
+        .leadsCountNew()
+        .then((r) => setNewLeadsCount(r?.count ?? 0))
+        .catch(() => {});
+    };
+    refreshLeadCount();
+    window.addEventListener("focus", refreshLeadCount);
+    const timer = window.setInterval(refreshLeadCount, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener("focus", refreshLeadCount);
+      window.clearInterval(timer);
+    };
+  }, [location.pathname]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
