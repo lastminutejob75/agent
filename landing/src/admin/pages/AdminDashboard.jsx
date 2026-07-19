@@ -18,12 +18,8 @@ import {
   Sparkles,
   ChevronRight,
   Plus,
-  Trash2,
 } from "lucide-react";
-import {
-  adminApi,
-  getAdminDashboardBundle,
-} from "../../lib/adminApi.js";
+import { getAdminDashboardBundle } from "../../lib/adminApi.js";
 import { T, radius, shadow, font, keyframes } from "../theme.js";
 
 const NAVY = "#071A33";
@@ -168,16 +164,6 @@ function leadsVolumeHeading(apiPeriod) {
       return "Période sélectionnée";
   }
 }
-
-function leadsVolumeExplanation(apiPeriod) {
-  if (apiPeriod === "month") {
-    return "Nombre de leads créés depuis le 1er du mois (UTC). Suit le sélecteur de période en haut de page.";
-  }
-  return `Nombre de leads créés sur ${leadsVolumeHeading(apiPeriod).toLowerCase()} (fenêtre glissante). Suit le sélecteur de période en haut de page.`;
-}
-
-const QUALIFY_TOOLTIP =
-  "File opérationnelle : compteur métier côté serveur (ex. statut « nouveau » / à traiter). Il ne change pas quand vous passez de 24 h à 7 jours ou au mois — ouvrez la liste leads pour la traiter.";
 
 function toneSurface(tone) {
   switch (tone) {
@@ -401,7 +387,6 @@ export default function AdminDashboard() {
   const [fetchError, setFetchError] = useState(null);
   const [isSampleMode, setIsSampleMode] = useState(false);
   const [severityFilter, setSeverityFilter] = useState("all");
-  const [deletingLeadId, setDeletingLeadId] = useState(null);
   const [selection, setSelection] = useState({ kind: "kpi", id: "alerts" });
   const todayLabel = useMemo(
     () => new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" }).format(new Date()),
@@ -410,7 +395,6 @@ export default function AdminDashboard() {
 
   const apiPeriod = useMemo(() => PERIOD_UI.find(([u]) => u === periodUi)?.[1] || "30d", [periodUi]);
   const leadsVolTitle = leadsVolumeHeading(apiPeriod);
-  const leadsVolCaption = leadsVolumeExplanation(apiPeriod);
   const leadsEmptyMessage = `Aucun nouveau lead sur ${leadsVolTitle.toLowerCase()}.`;
 
   const load = useCallback(async () => {
@@ -469,34 +453,6 @@ export default function AdminDashboard() {
   useEffect(() => {
     load();
   }, [load]);
-
-  const handleDeleteLead = useCallback(
-    async (lead) => {
-      const id = lead?.id;
-      if (!id) return;
-      const label = String(lead.name || id || "").slice(0, 120);
-      if (
-        !window.confirm(
-          `Supprimer définitivement ce lead (${label}) ? Cette action est irréversible.`,
-        )
-      ) {
-        return;
-      }
-      setDeletingLeadId(id);
-      try {
-        await adminApi.leadDelete(id);
-        setSelection((prev) =>
-          prev.kind === "lead" && prev.lead?.id === id ? { kind: "kpi", id: "clients" } : prev,
-        );
-        await load();
-      } catch (e) {
-        window.alert(e?.message || "Échec de la suppression.");
-      } finally {
-        setDeletingLeadId(null);
-      }
-    },
-    [load],
-  );
 
   const kpis = pickKpisPayload(summary);
 
@@ -615,28 +571,6 @@ export default function AdminDashboard() {
         onSecondary: null,
       };
     }
-    if (selection.kind === "lead" && selection.lead) {
-      const L = selection.lead;
-      const id = L.id;
-      const arrivalText = formatLeadProspectCreation(L);
-      const srcLabel = L.source_label || L.source || "";
-      return {
-        title: L.name,
-        body: [
-          arrivalText ? `Création (prospect) : ${arrivalText}` : "",
-          L.note ? `Note / situation : ${L.note}` : "",
-          srcLabel ? `Source : ${srcLabel}` : "",
-          L.status ? `Statut pipeline : ${L.status}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        primaryLabel: "Ouvrir le lead",
-        primaryTo: id ? `/admin/leads?lead=${encodeURIComponent(id)}` : "/admin/leads",
-        secondaryLabel: "Tous les leads",
-        secondaryTo: "/admin/leads",
-        onSecondary: null,
-      };
-    }
     if (selection.kind === "task" && selection.task) {
       const t = selection.task;
       return {
@@ -679,10 +613,15 @@ export default function AdminDashboard() {
         * { box-sizing: border-box; }
         @media (max-width: 900px) {
           .uwi-admin-quick-actions { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
+          .uwi-admin-lead-row { grid-template-columns: minmax(0,1fr) auto !important; }
+          .uwi-admin-lead-source { display: none !important; }
         }
         @media (max-width: 600px) {
           .uwi-admin-home { padding: 12px 10px 28px !important; }
           .uwi-admin-quick-actions { grid-template-columns: 1fr !important; }
+          .uwi-admin-leads-summary { grid-template-columns: 1fr 1fr !important; }
+          .uwi-admin-leads-summary > button { grid-column: 1 / -1; width: 100% !important; }
+          .uwi-admin-lead-date { display: none !important; }
         }
       `}</style>
 
@@ -929,6 +868,19 @@ export default function AdminDashboard() {
               })}
         </section>
 
+        <LeadsOverview
+          loading={loading}
+          leads={latestLeads}
+          newLeadsCount={newLeadsCount}
+          qualifyToday={qualifyToday}
+          periodLabel={leadsVolTitle}
+          emptyMessage={leadsEmptyMessage}
+          onOpenLead={(lead) =>
+            navigate(lead?.id ? `/admin/leads?lead=${encodeURIComponent(lead.id)}` : "/admin/leads")
+          }
+          onOpenAll={() => navigate("/admin/leads")}
+        />
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 18 }}>
           {/* Actions */}
           <section
@@ -1061,187 +1013,8 @@ export default function AdminDashboard() {
             )}
           </section>
 
-          {/* Leads + panneau détail */}
+          {/* Panneau détail */}
           <aside style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <section
-              style={{
-                background: T.bgCard,
-                border: `1px solid ${CDC_BORDER}`,
-                borderRadius: 28,
-                padding: 20,
-                boxShadow: shadow.card,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 14 }}>
-                <div>
-                  <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: NAVY }}>Leads</h2>
-                  <p style={{ margin: "6px 0 0", fontSize: 13, color: T.textMuted, maxWidth: 320 }}>
-                    Deux indicateurs : volume sur la période (sélecteur en haut) et file à qualifier (règle opérationnelle, indépendante).
-                    Chaque ligne affiche le jour et l’heure de création du lead par le prospect (heure de Paris).
-                  </p>
-                </div>
-                <button type="button" onClick={() => navigate("/admin/leads")} style={btnPrimarySmall()}>
-                  Voir les leads
-                </button>
-              </div>
-              <div
-                style={{
-                  borderRadius: 22,
-                  border: `1px solid #BFE9EC`,
-                  background: T.tealLight,
-                  padding: 14,
-                  marginBottom: 12,
-                }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 800, color: T.tealDark }}>Volume — {leadsVolTitle}</div>
-                <p style={{ margin: "4px 0 0", fontSize: 11, fontWeight: 600, color: T.textMuted, lineHeight: 1.45 }}>
-                  {leadsVolCaption}
-                </p>
-                {loading ? (
-                  <div style={{ marginTop: 8, ...shimmerBar(120, 36) }} />
-                ) : (
-                  <div style={{ fontSize: 32, fontWeight: 900, color: NAVY, marginTop: 8 }}>{formatIntlNumber(newLeadsCount)}</div>
-                )}
-                <div
-                  title={QUALIFY_TOOLTIP}
-                  role="note"
-                  style={{
-                    marginTop: 12,
-                    paddingTop: 12,
-                    borderTop: `1px dashed rgba(15,118,142,0.35)`,
-                  }}
-                >
-                  <div style={{ fontSize: 12, fontWeight: 900, color: T.tealDark, letterSpacing: "0.02em" }}>
-                    À qualifier · vue live
-                  </div>
-                  {loading ? (
-                    <div style={{ marginTop: 8, ...shimmerBar(180, 14) }} />
-                  ) : (
-                    <>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: NAVY, marginTop: 4 }}>
-                        {qualifyToday ? `${formatIntlNumber(qualifyToday)} lead(s)` : "0 lead en file (règles actuelles)"}
-                      </div>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, marginTop: 4, lineHeight: 1.45 }}>
-                        Indépendant du sélecteur de période — survolez cette zone pour le détail.
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-              {loading ? (
-                <ColumnSkeleton rows={3} />
-              ) : latestLeads.length === 0 ? (
-                <div style={{ fontSize: 13, color: T.textMuted }}>{leadsEmptyMessage}</div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: T.textMuted, marginBottom: 6 }}>
-                    Leads ({leadsVolTitle.toLowerCase()}) — jusqu’à 80 · suppression définitive
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                      maxHeight: 440,
-                      overflowY: "auto",
-                      paddingRight: 4,
-                    }}
-                  >
-                    {latestLeads.map((lead) => {
-                      const arrivalText = formatLeadProspectCreation(lead);
-                      const srcLabel = lead.source_label || lead.source || "";
-                      return (
-                      <div
-                        key={lead.id || lead.name}
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          alignItems: "stretch",
-                        }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setSelection({ kind: "lead", lead })}
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: 8,
-                            textAlign: "left",
-                            padding: 12,
-                            borderRadius: 16,
-                            border: `1px solid #E4ECEF`,
-                            background: "#FBFDFD",
-                            cursor: "pointer",
-                            fontFamily: "inherit",
-                          }}
-                        >
-                          <span style={{ minWidth: 0 }}>
-                            <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: NAVY }}>{lead.name}</span>
-                            {arrivalText ? (
-                              <span
-                                style={{
-                                  display: "block",
-                                  fontSize: 12,
-                                  fontWeight: 800,
-                                  color: T.tealDark,
-                                  marginTop: 5,
-                                  lineHeight: 1.35,
-                                }}
-                              >
-                                Nouveau · {arrivalText}
-                              </span>
-                            ) : null}
-                            <span
-                              style={{
-                                display: "block",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                color: T.textMuted,
-                                marginTop: 4,
-                              }}
-                            >
-                              {srcLabel} · {lead.status}
-                            </span>
-                          </span>
-                          <ChevronRight size={18} color={T.teal} style={{ flexShrink: 0 }} />
-                        </button>
-                        <button
-                          type="button"
-                          title="Supprimer définitivement ce lead"
-                          aria-label={`Supprimer le lead ${lead.name || lead.id || ""}`}
-                          disabled={deletingLeadId === lead.id}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDeleteLead(lead);
-                          }}
-                          style={{
-                            flexShrink: 0,
-                            width: 46,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            borderRadius: 16,
-                            border: "1px solid #F5C6CB",
-                            background: deletingLeadId === lead.id ? "#F3F4F6" : "#FFF5F5",
-                            cursor: deletingLeadId === lead.id ? "wait" : "pointer",
-                            color: "#B71C1C",
-                            fontFamily: "inherit",
-                          }}
-                        >
-                          <Trash2 size={18} strokeWidth={2} />
-                        </button>
-                      </div>
-                    );
-                    })}
-                  </div>
-                </>
-              )}
-            </section>
-
             <section
               style={{
                 background: NAVY,
@@ -1369,6 +1142,178 @@ export default function AdminDashboard() {
   );
 }
 
+function LeadsOverview({
+  loading,
+  leads,
+  newLeadsCount,
+  qualifyToday,
+  periodLabel,
+  emptyMessage,
+  onOpenLead,
+  onOpenAll,
+}) {
+  const visibleLeads = leads.slice(0, 5);
+
+  return (
+    <section
+      style={{
+        marginBottom: 18,
+        borderRadius: 20,
+        border: `1px solid ${CDC_BORDER}`,
+        background: T.bgCard,
+        boxShadow: "0 12px 32px rgba(7,26,51,.055)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          padding: "18px 20px",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 16,
+          borderBottom: `1px solid ${T.border}`,
+        }}
+      >
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <span style={{ width: 34, height: 34, borderRadius: 11, display: "grid", placeItems: "center", color: T.teal, background: T.tealLight }}>
+              <UserPlus size={17} />
+            </span>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: NAVY }}>Prospects à suivre</h2>
+              <p style={{ margin: "3px 0 0", fontSize: 12, color: T.textMuted }}>
+                Les derniers contacts, classés du plus récent au plus ancien.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="uwi-admin-leads-summary"
+          style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(120px,auto)) auto", gap: 8 }}
+        >
+          <div style={leadSummaryCard()}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: T.textMuted }}>Nouveaux · {periodLabel}</span>
+            <strong style={{ fontSize: 22, color: NAVY }}>{loading ? "…" : formatIntlNumber(newLeadsCount)}</strong>
+          </div>
+          <div style={leadSummaryCard(qualifyToday > 0)}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: T.textMuted }}>À qualifier</span>
+            <strong style={{ fontSize: 22, color: qualifyToday > 0 ? T.orange : NAVY }}>
+              {loading ? "…" : formatIntlNumber(qualifyToday)}
+            </strong>
+          </div>
+          <button type="button" onClick={onOpenAll} style={adminHomeDarkButton()}>
+            Ouvrir le pipeline
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 20 }}><ColumnSkeleton rows={3} /></div>
+      ) : visibleLeads.length === 0 ? (
+        <div style={{ padding: "26px 20px", textAlign: "center" }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: NAVY }}>{emptyMessage}</div>
+          <p style={{ margin: "5px 0 0", fontSize: 12, color: T.textMuted }}>Les nouveaux prospects apparaîtront automatiquement ici.</p>
+        </div>
+      ) : (
+        <div>
+          {visibleLeads.map((lead) => {
+            const status = leadStatusMeta(lead.status);
+            const source = lead.source_label || lead.source || "Source inconnue";
+            const contact = lead.email || lead.phone || "Coordonnées à compléter";
+            return (
+              <button
+                key={lead.id || `${lead.name}-${lead.created_at}`}
+                type="button"
+                className="uwi-admin-lead-row"
+                onClick={() => onOpenLead(lead)}
+                style={{
+                  width: "100%",
+                  display: "grid",
+                  gridTemplateColumns: "minmax(230px,1.5fr) minmax(130px,.65fr) minmax(150px,.7fr) auto",
+                  alignItems: "center",
+                  gap: 14,
+                  padding: "13px 20px",
+                  border: "none",
+                  borderBottom: `1px solid ${T.border}`,
+                  background: "#fff",
+                  color: T.text,
+                  textAlign: "left",
+                  fontFamily: "inherit",
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+                  <span style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 12, display: "grid", placeItems: "center", background: T.tealLight, color: T.tealDark, fontSize: 12, fontWeight: 900 }}>
+                    {leadInitials(lead.name)}
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: NAVY, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {lead.name || "Prospect sans nom"}
+                    </span>
+                    <span style={{ display: "block", marginTop: 3, fontSize: 12, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {contact}
+                    </span>
+                  </span>
+                </span>
+                <span className="uwi-admin-lead-source" style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 10, fontWeight: 700, color: T.textMuted, marginBottom: 4 }}>Origine</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: T.textSecondary }}>{source}</span>
+                </span>
+                <span className="uwi-admin-lead-date">
+                  <span style={{ display: "block", fontSize: 10, fontWeight: 700, color: T.textMuted, marginBottom: 4 }}>Reçu</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: T.textSecondary }}>{formatLeadProspectCreation(lead) || "Date inconnue"}</span>
+                </span>
+                <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10 }}>
+                  <span style={{ padding: "5px 9px", borderRadius: radius.pill, background: status.bg, color: status.color, fontSize: 10, fontWeight: 900 }}>
+                    {status.label}
+                  </span>
+                  <ChevronRight size={18} color={T.teal} />
+                </span>
+              </button>
+            );
+          })}
+          {leads.length > visibleLeads.length ? (
+            <button type="button" onClick={onOpenAll} style={{ width: "100%", padding: 12, border: 0, background: T.bgSubtle, color: T.tealDark, fontFamily: "inherit", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+              Voir les {formatIntlNumber(leads.length - visibleLeads.length)} autre(s) prospect(s)
+            </button>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function leadSummaryCard(highlight = false) {
+  return {
+    minHeight: 54,
+    padding: "8px 11px",
+    borderRadius: 12,
+    border: `1px solid ${highlight ? `${T.orange}55` : T.border}`,
+    background: highlight ? T.orangeLight : T.bgSubtle,
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+    gap: 2,
+  };
+}
+
+function leadInitials(name) {
+  const parts = String(name || "?").trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+}
+
+function leadStatusMeta(status) {
+  const normalized = String(status || "new").toLowerCase();
+  if (["qualified", "qualifie", "qualifié"].includes(normalized)) return { label: "QUALIFIÉ", color: T.green, bg: T.greenLight };
+  if (["converted", "converti", "client"].includes(normalized)) return { label: "CONVERTI", color: T.tealDark, bg: T.tealLight };
+  if (["lost", "perdu", "rejected"].includes(normalized)) return { label: "CLOS", color: T.textMuted, bg: T.neutralLight };
+  if (["contacted", "contacte", "contacté"].includes(normalized)) return { label: "CONTACTÉ", color: "#2563EB", bg: "#EFF6FF" };
+  return { label: "À TRAITER", color: T.orange, bg: T.orangeLight };
+}
+
 function btnPrimarySmall() {
   return {
     padding: "8px 12px",
@@ -1484,14 +1429,5 @@ function shimmerBlock() {
     background: `linear-gradient(90deg, ${T.border} 25%, ${T.bgSubtle} 50%, ${T.border} 75%)`,
     backgroundSize: "200% 100%",
     animation: "uwi-shimmer 1.4s ease infinite",
-  };
-}
-
-function shimmerBar(w, h) {
-  return {
-    width: w,
-    height: h,
-    borderRadius: 10,
-    ...shimmerBlock(),
   };
 }
