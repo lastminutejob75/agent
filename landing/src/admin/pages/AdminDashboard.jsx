@@ -7,6 +7,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Building2,
+  Users,
+  UserPlus,
   Phone,
   Globe,
   Calendar,
@@ -16,7 +18,6 @@ import {
   Sparkles,
   ChevronRight,
   Plus,
-  RefreshCw,
   Trash2,
 } from "lucide-react";
 import {
@@ -402,6 +403,10 @@ export default function AdminDashboard() {
   const [severityFilter, setSeverityFilter] = useState("all");
   const [deletingLeadId, setDeletingLeadId] = useState(null);
   const [selection, setSelection] = useState({ kind: "kpi", id: "alerts" });
+  const todayLabel = useMemo(
+    () => new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" }).format(new Date()),
+    [],
+  );
 
   const apiPeriod = useMemo(() => PERIOD_UI.find(([u]) => u === periodUi)?.[1] || "30d", [periodUi]);
   const leadsVolTitle = leadsVolumeHeading(apiPeriod);
@@ -672,9 +677,16 @@ export default function AdminDashboard() {
       <style>{`
         ${keyframes}
         * { box-sizing: border-box; }
+        @media (max-width: 900px) {
+          .uwi-admin-quick-actions { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
+        }
+        @media (max-width: 600px) {
+          .uwi-admin-home { padding: 12px 10px 28px !important; }
+          .uwi-admin-quick-actions { grid-template-columns: 1fr !important; }
+        }
       `}</style>
 
-      <div style={{ padding: "28px 32px 40px", minWidth: 0, background: CDC_BG, fontFamily: font.body, color: T.text }}>
+      <div className="uwi-admin-home" style={{ padding: "18px 20px 40px", minWidth: 0, maxWidth: 1500, margin: "0 auto", background: CDC_BG, fontFamily: font.body, color: T.text }}>
         <header
           style={{
             display: "flex",
@@ -682,7 +694,12 @@ export default function AdminDashboard() {
             gap: 16,
             alignItems: "flex-start",
             justifyContent: "space-between",
-            marginBottom: 22,
+            marginBottom: 12,
+            padding: "18px 20px",
+            borderRadius: 20,
+            border: `1px solid ${T.border}`,
+            background: T.bgCard,
+            boxShadow: "0 12px 32px rgba(7,26,51,.055)",
             animation: "uwi-fadein 0.35s ease both",
           }}
         >
@@ -692,25 +709,20 @@ export default function AdminDashboard() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                padding: "5px 12px",
-                borderRadius: radius.pill,
-                border: `1px solid #BFE9EC`,
-                background: T.bgCard,
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 800,
-                color: T.tealDark,
-                marginBottom: 10,
-                boxShadow: shadow.card,
+                color: T.teal,
+                marginBottom: 4,
+                textTransform: "capitalize",
               }}
             >
-              <Sparkles size={14} /> Accueil admin · aujourd&apos;hui
+              {todayLabel}
             </div>
-            <h1 style={{ fontSize: 30, fontWeight: 800, color: NAVY, letterSpacing: -1, margin: 0, lineHeight: 1.1 }}>
-              Pilotage UWi
+            <h1 style={{ fontSize: 25, fontWeight: 800, color: NAVY, letterSpacing: "-.03em", margin: 0, lineHeight: 1.1 }}>
+              Bonjour Admin
             </h1>
-            <p style={{ margin: "8px 0 0", fontSize: 14, color: T.textSecondary, maxWidth: 640, lineHeight: 1.5 }}>
-              Vue macro : activité, valeur délivrée, coûts, risques et opportunités commerciales — détail dans les fiches
-              clients.
+            <p style={{ margin: "6px 0 0", fontSize: 13, color: T.textSecondary, maxWidth: 640, lineHeight: 1.5 }}>
+              Voici ce qui demande votre attention aujourd&apos;hui.
             </p>
           </div>
 
@@ -748,52 +760,72 @@ export default function AdminDashboard() {
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={load}
-              disabled={loading}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "9px 14px",
-                borderRadius: radius.lg,
-                border: `1px solid ${CDC_BORDER}`,
-                background: T.bgCard,
-                cursor: loading ? "wait" : "pointer",
-                fontFamily: "inherit",
-                fontWeight: 700,
-                fontSize: 13,
-                color: T.text,
-              }}
-            >
-              <RefreshCw size={15} className={loading ? "spin" : ""} />
-              Rafraîchir
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/admin/tenants/new")}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "9px 14px",
-                borderRadius: radius.lg,
-                border: "none",
-                cursor: "pointer",
-                fontFamily: "inherit",
-                fontWeight: 800,
-                fontSize: 13,
-                color: "#fff",
-                background: `linear-gradient(135deg,${T.teal},${T.tealDark})`,
-                boxShadow: shadow.card,
-              }}
-            >
-              <Plus size={16} />
-              Nouveau client
-            </button>
           </div>
         </header>
+
+        <section
+          style={{
+            marginBottom: 12,
+            padding: "14px 16px",
+            borderRadius: 16,
+            border: `1px solid ${T.green}55`,
+            background: T.greenLight,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ width: 34, height: 34, borderRadius: 11, display: "grid", placeItems: "center", color: T.green, background: "#fff" }}>
+              <Sparkles size={17} />
+            </span>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: NAVY }}>Pilotage UWi en direct</div>
+              <div style={{ marginTop: 2, fontSize: 12, fontWeight: 600, color: T.textSecondary }}>
+                {Number(kpis.critical_alerts_count || 0) > 0
+                  ? `${formatIntlNumber(kpis.critical_alerts_count)} alerte(s) critique(s) nécessitent une vérification.`
+                  : "Aucune alerte critique. Les services principaux sont opérationnels."}
+              </div>
+            </div>
+          </div>
+          <button type="button" onClick={() => navigate("/admin/operations")} style={adminHomeDarkButton()}>
+            Voir les opérations
+          </button>
+        </section>
+
+        <section
+          style={{
+            marginBottom: 14,
+            padding: "10px 12px 12px",
+            borderRadius: 20,
+            border: `1px solid ${T.border}`,
+            background: T.bgCard,
+            boxShadow: "0 10px 28px rgba(7,26,51,.055)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "0 2px 9px" }}>
+            <strong style={{ fontSize: 14, color: NAVY }}>Actions rapides</strong>
+            <button type="button" onClick={load} disabled={loading} style={{ border: 0, background: "transparent", color: T.textMuted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              {loading ? "Actualisation…" : "Actualiser"}
+            </button>
+          </div>
+          <div className="uwi-admin-quick-actions" style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 9 }}>
+            <button type="button" onClick={() => navigate("/admin/leads")} style={adminQuickAction(NAVY, "#fff", NAVY)}>
+              <UserPlus size={16} /> Prospects
+            </button>
+            <button type="button" onClick={() => navigate("/admin/tenants")} style={adminQuickAction("#fff", NAVY, T.border)}>
+              <Users size={16} /> Clients
+            </button>
+            <button type="button" onClick={() => navigate("/admin/tenants/new")} style={adminQuickAction(T.teal, "#fff", T.teal)}>
+              <Plus size={16} /> Créer un client
+            </button>
+            <button type="button" onClick={() => navigate("/admin/billing")} style={adminQuickAction("#fff", T.green, `${T.green}55`)}>
+              <Euro size={16} /> Facturation
+            </button>
+          </div>
+        </section>
 
         {fetchError ? (
           <div
@@ -1348,6 +1380,40 @@ function btnPrimarySmall() {
     fontWeight: 800,
     background: `linear-gradient(135deg,${T.teal},${T.tealDark})`,
     color: "#fff",
+  };
+}
+
+function adminHomeDarkButton() {
+  return {
+    minHeight: 40,
+    padding: "0 16px",
+    borderRadius: 11,
+    border: "none",
+    background: NAVY,
+    color: "#fff",
+    fontFamily: "inherit",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+  };
+}
+
+function adminQuickAction(background, color, borderColor) {
+  return {
+    minHeight: 42,
+    padding: "0 14px",
+    borderRadius: 11,
+    border: `1px solid ${borderColor}`,
+    background,
+    color,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    fontFamily: "inherit",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
   };
 }
 
