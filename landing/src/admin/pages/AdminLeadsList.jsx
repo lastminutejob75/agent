@@ -251,7 +251,7 @@ export default function AdminLeadsList() {
         });
       } catch (e) {
         if (cancelled) return;
-        setError(e?.message || "Impossible de charger les leads");
+        setError(e?.message || "Impossible de charger les prospects");
         setLeads([]);
         setTotal(0);
       } finally {
@@ -316,7 +316,7 @@ export default function AdminLeadsList() {
     const id = lead?.id;
     if (!id) return;
     const label = String(lead.cabinet || lead.contact || id || "").slice(0, 120);
-    if (!window.confirm(`Supprimer définitivement ce lead (« ${label} ») ? Cette action est irréversible.`)) return;
+    if (!window.confirm(`Supprimer définitivement ce prospect (« ${label} ») ? Cette action est irréversible.`)) return;
     setDeletingLeadId(id);
     setError("");
     try {
@@ -366,7 +366,7 @@ export default function AdminLeadsList() {
       });
       setRefreshKey((v) => v + 1);
     } catch (e) {
-      setCreateError(e?.message || "Impossible de créer le lead");
+      setCreateError(e?.message || "Impossible de créer le prospect");
     } finally {
       setCreatingLead(false);
     }
@@ -548,7 +548,7 @@ export default function AdminLeadsList() {
         <header style={{ marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-start", justifyContent: "space-between" }}>
           <div>
             <div style={{ marginBottom: 6, display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #BFE9EC", borderRadius: 999, padding: "4px 10px", fontSize: 11, fontWeight: 800, color: BRAND.tealDark, background: "#fff" }}>
-              ✦ Admin · Leads
+              ✦ Admin · Prospects
             </div>
             <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1, fontWeight: 900, color: BRAND.navy, letterSpacing: "-0.04em" }}>
               Pipeline commercial
@@ -596,7 +596,7 @@ export default function AdminLeadsList() {
               onClick={() => setShowCreateModal(true)}
               style={{ borderRadius: 14, border: "none", background: BRAND.teal, color: "#fff", padding: "10px 16px", fontWeight: 900, cursor: "pointer" }}
             >
-              + Ajouter un lead
+              + Ajouter un prospect
             </button>
           </div>
         </header>
@@ -605,7 +605,7 @@ export default function AdminLeadsList() {
           <div style={{ marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div>
               <div style={{ fontWeight: 900, fontSize: 18, color: BRAND.navy }}>Pipeline</div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted }}>Lead → qualification → essai gratuit → cabinet créé</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted }}>Prospect → qualification → essai → client</div>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
               <Pill variant="teal">{total} résultat(s)</Pill>
@@ -728,131 +728,49 @@ export default function AdminLeadsList() {
         </details>
 
         {loading ? (
-          <div style={{ padding: 22, color: BRAND.muted, fontWeight: 700 }}>Chargement des leads…</div>
+          <div style={{ padding: 22, color: BRAND.muted, fontWeight: 700 }}>Chargement des prospects…</div>
         ) : (
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "minmax(0, 1.15fr) minmax(330px, 0.85fr)" }}>
-            <section style={{ display: "grid", gap: 10 }}>
-              {leads.map((lead) => {
-                const selected = String(selectedLeadId) === String(lead.id);
-                return (
-                  <div key={lead.id} style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedLeadId(String(lead.id));
-                        const next = new URLSearchParams(searchParams);
-                        next.set("lead", String(lead.id));
-                        setSearchParams(next, { replace: true });
-                        setConvertMode(false);
-                      }}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        width: "100%",
-                        textAlign: "left",
-                        borderRadius: isNarrow ? 16 : 22,
-                        border: `1px solid ${selected ? BRAND.teal : BRAND.border}`,
-                        background: "#fff",
-                        padding: isNarrow ? 11 : 14,
-                        cursor: "pointer",
-                        boxShadow: selected ? "0 8px 24px rgba(0,156,164,0.12)" : "0 2px 8px rgba(10,22,40,0.06)",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                    <div style={{ marginBottom: 8, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: isNarrow ? 6 : 8 }}>
-                      <div style={{ display: "flex", gap: 10, minWidth: 0 }}>
-                        <div style={{ ...tone(statusTone(lead.status)), width: isNarrow ? 36 : 42, height: isNarrow ? 36 : 42, border: "1px solid", borderRadius: isNarrow ? 12 : 14, display: "grid", placeItems: "center", fontWeight: 900, fontSize: isNarrow ? 12 : 14 }}>
-                          {(lead.cabinet || "CB").split(" ").map((x) => x[0]).join("").slice(0, 2)}
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 900, color: BRAND.navy, fontSize: isNarrow ? 14 : 15, lineHeight: 1.2 }}>{lead.cabinet}</div>
-                          <div style={{ marginTop: 2, fontSize: isNarrow ? 11 : 12, color: BRAND.muted, fontWeight: 700, lineHeight: 1.25 }}>
-                            {lead.contact} · {lead.profession} {lead.city ? `· ${lead.city}` : ""}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 10, fontWeight: 800, color: "#98A2B3" }}>Score</div>
-                        <div style={{ fontSize: isNarrow ? 19 : 22, fontWeight: 900, color: BRAND.navy, lineHeight: 1 }}>{lead.score}</div>
-                      </div>
-                    </div>
-                    <div style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      <Pill variant={statusTone(lead.status)}>{lead.statusLabel}</Pill>
-                      <Pill variant={priorityTone(lead.priority)}>{lead.priority === "high" ? "Priorité haute" : lead.priority === "medium" ? "Priorité moyenne" : "Priorité basse"}</Pill>
-                      <Pill variant={lead.segment === "grand_account" ? "yellow" : "gray"}>{segmentLabel(lead.segment)}</Pill>
-                    </div>
-                    <div style={{ marginBottom: 8, display: "grid", gridTemplateColumns: isNarrow ? "1fr 1fr" : "repeat(3,minmax(0,1fr))", gap: 6 }}>
-                      <MiniInfo label="Source" value={lead.source} />
-                      <MiniInfo label="Appels/jour" value={lead.callsPerDay} />
-                      <div style={{ gridColumn: isNarrow ? "1 / -1" : "auto" }}>
-                        <MiniInfo label="Assistante" value={lead.hasAssistant} />
-                      </div>
-                    </div>
-                    <div style={{ borderRadius: 12, background: "#F8FBFC", padding: isNarrow ? 9 : 10 }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: "#98A2B3", textTransform: "uppercase" }}>Douleur principale</div>
-                      <div style={{ marginTop: 4, fontSize: isNarrow ? 12 : 13, fontWeight: 700, color: BRAND.navy, lineHeight: isNarrow ? 1.35 : 1.45 }}>{lead.pain}</div>
-                    </div>
-                    <div style={{ marginTop: 8, borderRadius: 12, border: `1px solid #E4ECEF`, background: "#fff", padding: isNarrow ? 9 : 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                      <div>
-                        <div style={{ fontSize: 10, fontWeight: 800, color: "#98A2B3", textTransform: "uppercase" }}>Prochaine action</div>
-                        <div style={{ fontSize: isNarrow ? 11 : 12, fontWeight: 800, color: BRAND.navy }}>{lead.nextAction}</div>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted }}>{lead.nextActionAt}</div>
-                      </div>
-                      <span style={{ color: BRAND.teal, fontSize: 20, fontWeight: 900 }}>›</span>
-                    </div>
-                  </button>
-                    <button
-                      type="button"
-                      title="Supprimer définitivement ce lead"
-                      aria-label={`Supprimer le lead ${lead.cabinet || lead.id}`}
-                      disabled={deletingLeadId === lead.id}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleDeleteLead(lead);
-                      }}
-                      style={{
-                        flexShrink: 0,
-                        alignSelf: "stretch",
-                        width: isNarrow ? 44 : 48,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        borderRadius: isNarrow ? 14 : 18,
-                        border: `1px solid #F5C6CB`,
-                        background: deletingLeadId === lead.id ? "#F3F4F6" : "#FFF5F5",
-                        cursor: deletingLeadId === lead.id ? "wait" : "pointer",
-                        color: BRAND.red,
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      <Trash2 size={isNarrow ? 17 : 18} strokeWidth={2} />
-                    </button>
-                  </div>
-                );
-              })}
+          <div style={{ display: "grid", gap: 16, alignItems: "start", gridTemplateColumns: isNarrow ? "minmax(0, 1fr)" : "minmax(0, 1fr) 430px" }}>
+            <section style={{ display: "grid", gap: 7 }}>
+              {leads.map((lead) => (
+                <LeadCard
+                  key={lead.id}
+                  lead={lead}
+                  selected={String(selectedLeadId) === String(lead.id)}
+                  isNarrow={isNarrow}
+                  onSelect={() => {
+                    setSelectedLeadId(String(lead.id));
+                    const next = new URLSearchParams(searchParams);
+                    next.set("lead", String(lead.id));
+                    setSearchParams(next, { replace: true });
+                    setConvertMode(false);
+                  }}
+                />
+              ))}
               {leads.length === 0 ? (
-                <div style={{ borderRadius: 22, border: `1px dashed #BFD3DA`, background: "#fff", padding: 24, textAlign: "center", color: BRAND.muted, fontWeight: 700 }}>
-                  Aucun lead trouvé.
+                <div style={{ borderRadius: 18, border: `1px dashed #BFD3DA`, background: "#fff", padding: 24, textAlign: "center", color: BRAND.muted, fontWeight: 700 }}>
+                  Aucun prospect trouvé.
                 </div>
               ) : null}
             </section>
 
-            {selectedLead ? (
-              <DetailPanel
-                lead={selectedLead}
-                convertMode={convertMode}
-                setConvertMode={setConvertMode}
-                onStatusChange={quickStatusUpdate}
-                onDelete={handleDeleteLead}
-                deletingLeadId={deletingLeadId}
-                isNarrow={isNarrow}
-              />
-            ) : (
-              <aside style={{ position: isNarrow ? "relative" : "sticky", top: 12, alignSelf: "start", borderRadius: 24, border: `1px solid ${BRAND.border}`, background: "#fff", padding: 16 }}>
-                <div style={{ color: BRAND.muted, fontWeight: 700 }}>Sélectionne un lead.</div>
-              </aside>
-            )}
+            <div style={{ order: isNarrow ? -1 : 0 }}>
+              {selectedLead ? (
+                <DetailPanel
+                  lead={selectedLead}
+                  convertMode={convertMode}
+                  setConvertMode={setConvertMode}
+                  onStatusChange={quickStatusUpdate}
+                  onDelete={handleDeleteLead}
+                  deletingLeadId={deletingLeadId}
+                  isNarrow={isNarrow}
+                />
+              ) : (
+                <aside style={{ position: isNarrow ? "relative" : "sticky", top: 12, borderRadius: 20, border: `1px solid ${BRAND.border}`, background: "#fff", padding: 16 }}>
+                  <div style={{ color: BRAND.muted, fontWeight: 700 }}>Sélectionnez un prospect.</div>
+                </aside>
+              )}
+            </div>
           </div>
         )}
         {!loading && total > 0 ? (
@@ -922,7 +840,7 @@ export default function AdminLeadsList() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-              <div style={{ fontSize: 20, fontWeight: 900, color: BRAND.navy }}>Nouveau lead</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: BRAND.navy }}>Nouveau prospect</div>
               <button onClick={() => setShowCreateModal(false)} style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer", color: BRAND.muted }}>×</button>
             </div>
             <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr" }}>
@@ -966,7 +884,7 @@ export default function AdminLeadsList() {
             >
               <button onClick={() => setShowCreateModal(false)} style={{ borderRadius: 12, border: `1px solid ${BRAND.border}`, background: "#fff", padding: "9px 12px", fontWeight: 800, cursor: "pointer" }}>Annuler</button>
               <button onClick={handleCreateLead} disabled={creatingLead} style={{ borderRadius: 12, border: "none", background: BRAND.teal, color: "#fff", padding: "9px 12px", fontWeight: 900, cursor: creatingLead ? "default" : "pointer", opacity: creatingLead ? 0.65 : 1 }}>
-                {creatingLead ? "Création..." : "Créer le lead"}
+                {creatingLead ? "Création..." : "Créer le prospect"}
               </button>
             </div>
           </div>
@@ -976,12 +894,66 @@ export default function AdminLeadsList() {
   );
 }
 
-function MiniInfo({ label, value }) {
+function LeadCard({ lead, selected, isNarrow, onSelect }) {
+  const priorityLabel = lead.priority === "high" ? "Haute" : lead.priority === "medium" ? "Moyenne" : "Basse";
+  const contextLabel = lead.nextAction && lead.nextAction !== "À définir" ? lead.nextAction : lead.source;
   return (
-    <div style={{ borderRadius: 10, background: "#F4F8FA", padding: "7px 8px" }}>
-      <div style={{ fontSize: 9, fontWeight: 800, color: "#98A2B3", textTransform: "uppercase" }}>{label}</div>
-      <div style={{ marginTop: 2, fontSize: 11, fontWeight: 800, color: BRAND.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value || "—"}</div>
-    </div>
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      style={{
+        position: "relative",
+        width: "100%",
+        minWidth: 0,
+        overflow: "hidden",
+        display: "grid",
+        gridTemplateColumns: isNarrow ? "minmax(0, 1fr) auto" : "minmax(190px, 1.4fr) minmax(170px, 1fr) auto",
+        gridTemplateAreas: isNarrow ? '"identity score" "meta meta"' : '"identity meta score"',
+        alignItems: "center",
+        gap: isNarrow ? 8 : 12,
+        borderRadius: 14,
+        border: `${selected ? 2 : 1}px solid ${selected ? BRAND.teal : BRAND.border}`,
+        borderLeft: `${selected ? 6 : 1}px solid ${selected ? BRAND.teal : BRAND.border}`,
+        background: selected ? "#ECFAFA" : "#fff",
+        padding: selected ? "10px 12px 10px 10px" : "11px 13px",
+        textAlign: "left",
+        cursor: "pointer",
+        boxShadow: selected ? "0 5px 16px rgba(0,156,164,0.12)" : "0 1px 3px rgba(10,22,40,0.04)",
+        fontFamily: "inherit",
+      }}
+    >
+      <div style={{ minWidth: 0, gridArea: "identity" }}>
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 14, lineHeight: 1.2, fontWeight: 900, color: BRAND.navy }}>
+            {lead.cabinet}
+          </span>
+          {selected ? <Pill variant="teal" filled>SÉLECTIONNÉ</Pill> : null}
+        </div>
+        <div style={{ marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, fontWeight: 700, color: BRAND.muted }}>
+          {lead.contact} · {lead.profession}
+        </div>
+      </div>
+
+      <div style={{ minWidth: 0, gridArea: "meta", display: "grid", gap: 5 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {!isNarrow ? <Pill variant={statusTone(lead.status)}>{lead.statusLabel}</Pill> : null}
+          <Pill variant={priorityTone(lead.priority)}>Priorité {priorityLabel.toLowerCase()}</Pill>
+        </div>
+        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, fontWeight: 700, color: BRAND.muted }}>
+          {lead.nextAction && lead.nextAction !== "À définir" ? "À faire" : "Source"} · <span style={{ color: BRAND.navy }}>{contextLabel}</span>
+        </div>
+      </div>
+
+      <div style={{ gridArea: "score", display: "flex", alignItems: "center", gap: 8 }}>
+        {isNarrow ? <Pill variant={statusTone(lead.status)}>{lead.statusLabel}</Pill> : null}
+        <div style={{ minWidth: 38, textAlign: "right" }}>
+          <div style={{ fontSize: 9, fontWeight: 800, color: "#98A2B3", textTransform: "uppercase" }}>Score</div>
+          <div style={{ fontSize: 19, lineHeight: 1, fontWeight: 900, color: BRAND.navy }}>{lead.score}</div>
+        </div>
+        <span aria-hidden="true" style={{ color: selected ? BRAND.tealDark : "#98A2B3", fontSize: 18, fontWeight: 900 }}>›</span>
+      </div>
+    </button>
   );
 }
 
@@ -1009,158 +981,163 @@ function DetailPanel({ lead, convertMode, setConvertMode, onStatusChange, onDele
     later: "À relancer plus tard",
   };
   return (
-    <aside style={{ position: isNarrow ? "relative" : "sticky", top: 12, alignSelf: "start", display: "grid", gap: 10 }}>
-      <section style={{ overflow: "hidden", borderRadius: isNarrow ? 18 : 24, border: "2px solid #009CA4", background: "#fff", boxShadow: "0 12px 30px rgba(0,156,164,0.16)" }}>
-        <div style={{ background: "#009CA4", color: "#fff", padding: isNarrow ? 12 : 14 }}>
-          <div style={{ marginBottom: 10, display: "flex", alignItems: "start", justifyContent: "space-between", gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", opacity: 0.75 }}>Action principale</div>
-              <div style={{ marginTop: 4, fontSize: isNarrow ? 20 : 24, lineHeight: 1.1, fontWeight: 900, letterSpacing: "-0.04em" }}>Créer le cabinet client</div>
-              <div style={{ marginTop: 2, fontSize: 12, fontWeight: 700, opacity: 0.9 }}>Préremplit le parcours de création depuis ce lead.</div>
-            </div>
+    <aside style={{ position: isNarrow ? "relative" : "sticky", top: 12, alignSelf: "start" }}>
+      <section style={{ overflow: "hidden", borderRadius: isNarrow ? 18 : 22, border: `1px solid ${BRAND.border}`, background: "#fff", boxShadow: "0 8px 24px rgba(7,26,51,0.08)" }}>
+        <div style={{ borderBottom: `1px solid ${BRAND.border}`, padding: isNarrow ? 14 : 18 }}>
+          <div style={{ marginBottom: 10, fontSize: 10, fontWeight: 900, letterSpacing: "0.12em", color: BRAND.tealDark }}>
+            PROSPECT SÉLECTIONNÉ
           </div>
+          <div style={{ fontSize: isNarrow ? 22 : 26, lineHeight: 1.1, fontWeight: 900, letterSpacing: "-0.035em", color: BRAND.navy }}>{lead.cabinet}</div>
+          <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: BRAND.muted }}>
+            {lead.contact} · {lead.profession}{lead.role ? ` · ${lead.role}` : ""}
+          </div>
+          <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <Pill variant={statusTone(lead.status)}>{lead.statusLabel}</Pill>
+            <Pill variant={priorityTone(lead.priority)}>
+              {lead.priority === "high" ? "Priorité haute" : lead.priority === "medium" ? "Priorité moyenne" : "Priorité basse"}
+            </Pill>
+            <Pill variant="gray">Score {lead.score}</Pill>
+          </div>
+        </div>
+
+        <div style={{ padding: isNarrow ? 14 : 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6 }}>
+            <button onClick={() => onStatusChange(lead, "contacted")} style={actionButton}>☎<span>Appeler</span></button>
+            <a href={`mailto:${lead.email || ""}`} style={{ ...actionButton, textDecoration: "none" }}>✉<span>Email</span></a>
+            <button onClick={() => onStatusChange(lead, "later")} style={actionButton}>↻<span>Relance</span></button>
+            <button onClick={() => onStatusChange(lead, "demo_scheduled")} style={actionButton}>▶<span>Démo</span></button>
+          </div>
+
           <Link
             to={`/admin/tenants/new?fromLead=${encodeURIComponent(lead.id)}`}
             onClick={() => setConvertMode(true)}
-            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderRadius: 14, background: "#fff", color: "#071A33", textDecoration: "none", padding: isNarrow ? "11px 12px" : "12px 14px", fontWeight: 900 }}
+            style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", borderRadius: 14, background: BRAND.teal, color: "#fff", textDecoration: "none", padding: "13px 15px", fontSize: 14, fontWeight: 900, boxShadow: "0 6px 16px rgba(0,156,164,0.2)" }}
           >
-            <span>Convertir en cabinet client</span>
+            <span>Convertir en client</span>
             <span style={{ fontSize: 20 }}>→</span>
           </Link>
-        </div>
-        <div style={{ padding: 10, display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr", gap: 8 }}>
-          <MiniInfo label="Plan suggéré" value={plan} />
-          <MiniInfo label="Potentiel" value={lead.priority === "high" ? "Très élevée" : lead.priority === "medium" ? "Élevée" : "Moyenne"} />
-        </div>
-      </section>
 
-      <section style={{ overflow: "hidden", borderRadius: isNarrow ? 18 : 24, border: `1px solid ${BRAND.border}`, background: "#fff" }}>
-        <div style={{ background: BRAND.navy, color: "#fff", padding: isNarrow ? 12 : 14 }}>
-          <div style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-            <Pill variant={statusTone(lead.status)}>{lead.statusLabel}</Pill>
-            <Pill variant={priorityTone(lead.priority)}>{lead.priority === "high" ? "Priorité haute" : lead.priority}</Pill>
-            <Pill variant="gray">{segmentLabel(lead.segment)}</Pill>
-          </div>
-          <div style={{ fontSize: isNarrow ? 24 : 28, lineHeight: 1.1, fontWeight: 900, letterSpacing: "-0.04em" }}>{lead.cabinet}</div>
-          <div style={{ marginTop: 2, fontSize: 12, fontWeight: 700, opacity: 0.8 }}>{lead.contact} {lead.role ? `· ${lead.role}` : ""}</div>
-          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr", gap: 8 }}>
-            <button onClick={() => onStatusChange(lead, "contacted")} style={actionBtnNavy}>☎ Appeler</button>
-            <a href={`mailto:${lead.email || ""}`} style={{ ...actionBtnNavy, textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>✉ Email</a>
-            <button onClick={() => onStatusChange(lead, "later")} style={actionBtnNavy}>□ Relance</button>
-            <button onClick={() => onStatusChange(lead, "demo_scheduled")} style={{ ...actionBtnNavy, background: BRAND.yellow, color: BRAND.navy }}>Démo</button>
-          </div>
-        </div>
-        <div style={{ padding: 12 }}>
-          {nextStatuses.length ? (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ marginBottom: 6, fontSize: 10, fontWeight: 800, color: "#98A2B3", textTransform: "uppercase" }}>Étapes suivantes</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {nextStatuses.map((status) => (
-                  <button
-                    key={status}
-                    type="button"
-                    onClick={() => onStatusChange(lead, status)}
-                    style={{ borderRadius: 999, border: `1px solid ${BRAND.border}`, background: "#F8FBFC", padding: "4px 10px", fontSize: 11, fontWeight: 800, color: BRAND.navy, cursor: "pointer" }}
-                  >
-                    {statusLabel[status] || status}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr" }}>
-            <Info label="Email" value={lead.email} />
+          <div style={{ marginTop: 14, display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr" }}>
             <Info label="Téléphone" value={lead.callback_phone || lead.phone || "—"} />
+            <Info label="Email" value={lead.email || "—"} />
             <Info label="Ville" value={lead.city || "—"} />
-            <Info label="Type" value={segmentLabel(lead.segment)} />
-            <Info label="Source" value={lead.source} />
-            <Info label="Potentiel" value={lead.priority === "high" ? "Très élevée" : "Élevée"} />
+            <Info label="Prochaine action" value={lead.nextAction || "À définir"} />
           </div>
           <div style={detailTextBlock}>
-            <div style={detailTitle}>Douleur</div>
+            <div style={detailTitle}>Besoin principal</div>
             <p style={detailBody}>{lead.pain}</p>
           </div>
-          <div style={detailTextBlock}>
-            <div style={detailTitle}>Objection / point de vigilance</div>
-            <p style={detailBody}>{lead.objection || "À qualifier pendant l’appel de découverte."}</p>
-          </div>
-        </div>
-      </section>
 
-      <section style={{ borderRadius: isNarrow ? 18 : 24, border: `1px solid ${BRAND.border}`, background: "#fff", padding: 12 }}>
-        <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: "-0.03em", color: BRAND.navy }}>Préparation du cabinet</div>
-          <Pill variant="teal">fromLead</Pill>
-        </div>
-        {!convertMode ? (
-          <div style={{ borderRadius: 14, border: "1px dashed #BFE9EC", background: "#F8FBFC", padding: 12, fontSize: 13, fontWeight: 700, color: BRAND.muted }}>
-            Clique sur le bouton vert pour lancer la conversion vers `/admin/tenants/new?fromLead={lead.id}`.
-          </div>
-        ) : (
-          <div style={{ borderRadius: 14, border: "1px solid #BFE9EC", background: "#E7F7F7", padding: 12 }}>
-            <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 900, color: BRAND.tealDark }}>Données de préremplissage</div>
-            <div style={{ display: "grid", gap: 6 }}>
-              {[
-                ["cabinet_name", lead.cabinet],
-                ["contact_name", lead.contact],
-                ["profession", lead.profession],
-                ["city", lead.city || "—"],
-                ["email", lead.email || "—"],
-                ["phone", lead.callback_phone || lead.phone || "—"],
-              ].map(([k, v]) => (
-                <div key={k} style={{ borderRadius: 10, background: "rgba(255,255,255,0.75)", padding: "8px 10px", display: "flex", flexDirection: isNarrow ? "column" : "row", justifyContent: "space-between", gap: 4 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: BRAND.muted }}>{k}</span>
-                  <span style={{ fontSize: 12, fontWeight: 900, color: BRAND.navy, textAlign: isNarrow ? "left" : "right" }}>{v}</span>
-                </div>
-              ))}
+          <details style={detailsStyle}>
+            <summary style={summaryStyle}>Changer le statut</summary>
+            <div style={{ paddingTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {nextStatuses.length ? nextStatuses.map((status) => (
+                <button key={status} type="button" onClick={() => onStatusChange(lead, status)} style={statusButton}>
+                  {statusLabel[status] || status}
+                </button>
+              )) : <span style={mutedDetailText}>Aucune transition disponible.</span>}
             </div>
-          </div>
-        )}
-      </section>
+          </details>
 
-      <section style={{ borderRadius: isNarrow ? 18 : 24, border: `1px solid ${BRAND.red}44`, background: "#FFF5F5", padding: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 900, color: BRAND.red, marginBottom: 8 }}>Supprimer ce lead</div>
-        <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: BRAND.muted, lineHeight: 1.45 }}>
-          Retrait définitif de la base (pré-onboarding). Irréversible.
-        </p>
-        <button
-          type="button"
-          disabled={deletingLeadId === lead.id}
-          onClick={() => onDelete?.(lead)}
-          style={{
-            width: "100%",
-            borderRadius: 14,
-            border: `1px solid ${BRAND.red}`,
-            background: deletingLeadId === lead.id ? "#F3F4F6" : "#fff",
-            color: BRAND.red,
-            padding: "10px 12px",
-            fontWeight: 900,
-            fontSize: 13,
-            cursor: deletingLeadId === lead.id ? "wait" : "pointer",
-            fontFamily: "inherit",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-          }}
-        >
-          <Trash2 size={17} strokeWidth={2} />
-          {deletingLeadId === lead.id ? "Suppression…" : "Supprimer définitivement"}
-        </button>
+          <details style={detailsStyle}>
+            <summary style={summaryStyle}>Informations secondaires</summary>
+            <div style={{ paddingTop: 10, display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+              <Info label="Source" value={lead.source} />
+              <Info label="Segment" value={segmentLabel(lead.segment)} />
+              <Info label="Appels / jour" value={lead.callsPerDay} />
+              <Info label="Secrétariat" value={lead.hasAssistant} />
+            </div>
+            <div style={detailTextBlock}>
+              <div style={detailTitle}>Point de vigilance</div>
+              <p style={detailBody}>{lead.objection || "À qualifier lors du prochain échange."}</p>
+            </div>
+          </details>
+
+          <details style={detailsStyle}>
+            <summary style={summaryStyle}>Préparation du cabinet</summary>
+            <div style={{ paddingTop: 10 }}>
+              <div style={mutedDetailText}>
+                Plan suggéré : <strong style={{ color: BRAND.navy }}>{plan}</strong>. Les coordonnées seront préremplies lors de la conversion.
+              </div>
+              {convertMode ? (
+                <div style={{ marginTop: 8, borderRadius: 10, background: BRAND.softTeal, padding: 10, fontSize: 12, fontWeight: 800, color: BRAND.tealDark }}>
+                  Préparation de la conversion activée.
+                </div>
+              ) : null}
+            </div>
+          </details>
+
+          <details style={{ ...detailsStyle, borderColor: `${BRAND.red}44` }}>
+            <summary style={{ ...summaryStyle, color: BRAND.red }}>Suppression irréversible</summary>
+            <div style={{ paddingTop: 10 }}>
+              <p style={{ ...mutedDetailText, margin: "0 0 10px" }}>Supprime définitivement ce prospect.</p>
+              <button
+                type="button"
+                disabled={deletingLeadId === lead.id}
+                onClick={() => onDelete?.(lead)}
+                style={{ width: "100%", borderRadius: 12, border: `1px solid ${BRAND.red}`, background: "#fff", color: BRAND.red, padding: "9px 12px", fontWeight: 900, cursor: deletingLeadId === lead.id ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+              >
+                <Trash2 size={16} strokeWidth={2} />
+                {deletingLeadId === lead.id ? "Suppression…" : "Supprimer définitivement"}
+              </button>
+            </div>
+          </details>
+        </div>
       </section>
     </aside>
   );
 }
 
-const actionBtnNavy = {
+const actionButton = {
+  minWidth: 0,
+  minHeight: 58,
   borderRadius: 12,
-  border: "1px solid rgba(255,255,255,0.2)",
-  background: "rgba(255,255,255,0.08)",
-  color: "#fff",
+  border: `1px solid ${BRAND.border}`,
+  background: "#F8FBFC",
+  color: BRAND.navy,
+  textDecoration: "none",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 3,
   fontWeight: 900,
-  fontSize: 12,
-  padding: "8px 10px",
+  fontSize: 11,
+  padding: "7px 4px",
   cursor: "pointer",
+};
+
+const detailsStyle = {
+  marginTop: 10,
+  borderRadius: 12,
+  border: `1px solid ${BRAND.border}`,
+  background: "#fff",
+  padding: "10px 11px",
+};
+
+const summaryStyle = {
+  cursor: "pointer",
+  color: BRAND.navy,
+  fontSize: 12,
+  fontWeight: 900,
+};
+
+const statusButton = {
+  borderRadius: 999,
+  border: `1px solid ${BRAND.border}`,
+  background: "#F8FBFC",
+  padding: "5px 9px",
+  fontSize: 11,
+  fontWeight: 800,
+  color: BRAND.navy,
+  cursor: "pointer",
+};
+
+const mutedDetailText = {
+  fontSize: 12,
+  lineHeight: 1.45,
+  fontWeight: 700,
+  color: BRAND.muted,
 };
 
 const inputStyle = {
