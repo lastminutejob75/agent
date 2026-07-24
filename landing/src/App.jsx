@@ -30,6 +30,7 @@ const publicPageModules = import.meta.glob([
   "./pages/BillingPage.jsx",
   "./pages/PatientQuestionnairePage.jsx",
   "./pages/PatientQuestionnaireV2Page.jsx",
+  "./pages/AmbassadeBulgarieVisa.jsx",
   "./pages/NotFound.jsx",
 ]);
 const publicPageModulesEager = import.meta.glob([
@@ -56,6 +57,7 @@ const publicPageModulesEager = import.meta.glob([
   "./pages/BillingPage.jsx",
   "./pages/PatientQuestionnairePage.jsx",
   "./pages/PatientQuestionnaireV2Page.jsx",
+  "./pages/AmbassadeBulgarieVisa.jsx",
   "./pages/NotFound.jsx",
 ], {
   eager: true,
@@ -92,6 +94,7 @@ const CheckoutReturn = resolvePublicPage("./pages/CheckoutReturn.jsx");
 const BillingPage = resolvePublicPage("./pages/BillingPage.jsx");
 const PatientQuestionnairePage = resolvePublicPage("./pages/PatientQuestionnairePage.jsx");
 const PatientQuestionnaireV2Page = resolvePublicPage("./pages/PatientQuestionnaireV2Page.jsx");
+const AmbassadeBulgarieVisa = resolvePublicPage("./pages/AmbassadeBulgarieVisa.jsx");
 const NotFound = resolvePublicPage("./pages/NotFound.jsx");
 
 /** Layout neutre pour /app : rend uniquement les routes enfants (impersonate ou AppLayout). */
@@ -112,6 +115,9 @@ const AppRequests = lazy(() => import("./pages/AppRequests"));
 const ImpersonatePage = lazy(() => import("./pages/Impersonate"));
 const PublicPraticienPage = lazy(() => import("./pages/PublicPraticienPage"));
 const PagePubliquePraticienUWI = lazy(() => import("./pages/PagePubliquePraticienUWI"));
+const ConsularDashboardPage = lazy(() =>
+  import("./pages/AmbassadeBulgarieVisa").then((module) => ({ default: module.ConsularDashboardPage })),
+);
 
 const AdminAuthProvider = lazy(() =>
   import("./admin/AdminAuthProvider").then((module) => ({ default: module.AdminAuthProvider })),
@@ -232,6 +238,7 @@ export default function App() {
       <Route path="/politique-cookies" element={<LazyElement Component={PolitiqueCookies} />} />
       <Route path="/contact" element={<LazyElement Component={Contact} />} />
       <Route path="/demo" element={<LazyElement Component={Demo} />} />
+      <Route path="/ambassade-bulgarie" element={<LazyElement Component={AmbassadeBulgarieVisa} />} />
       <Route path="/secretaire-medicale-augmentee" element={<LazyElement Component={SeoVerticalPage} pageKey="/secretaire-medicale-augmentee" />} />
       <Route path="/secretaire-medicale-augmentee-medecin" element={<LazyElement Component={SeoVerticalPage} pageKey="/secretaire-medicale-augmentee-medecin" />} />
       <Route path="/agent-accueil-ia-medical" element={<Navigate to="/secretaire-medicale-augmentee" replace />} />
@@ -269,6 +276,7 @@ export default function App() {
           <Route path="patients/:phone" element={<LegacyPatientsRedirect />} />
           <Route path="patient-dashboard" element={<LazyElement Component={PatientDashboardPage} />} />
           <Route path="demandes" element={<LazyElement Component={AppRequests} />} />
+          <Route path="consulaire" element={<LazyElement Component={ConsularDashboardPage} />} />
           <Route path="profile" element={<LazyElement Component={ClientCabinetProfilePage} />} />
           <Route path="settings" element={<LazyElement Component={AppSettings} />} />
         </Route>

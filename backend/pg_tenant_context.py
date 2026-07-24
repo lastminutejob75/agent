@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Optional
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +71,45 @@ def set_tenant_id_on_connection(conn, tenant_id: Optional[int]) -> None:
         logger.debug("set_tenant_id_on_connection skipped tenant_id=%s err=%s", tenant_id, e)
 
 
+def set_post_id_on_connection(conn, post_id: Optional[str | UUID]) -> None:
+    """Pose le contexte RLS UUID d'un poste consulaire sur la transaction."""
+    if post_id is None:
+        return
+    try:
+        normalized_post_id = str(UUID(str(post_id)))
+    except (TypeError, ValueError, AttributeError):
+        raise ValueError("post_id must be a valid UUID") from None
+    if getattr(conn, "_uwi_current_post_id", None) == normalized_post_id:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT set_config('app.current_post_id', %s, true)",
+                (normalized_post_id,),
+            )
+        conn._uwi_current_post_id = normalized_post_id
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if _is_strict_rls():
+            logger.error(
+                "set_post_id_on_connection FAILED post_id=%s err=%s — risque fuite cross-postes",
+                normalized_post_id,
+                e,
+            )
+            raise
+        logger.debug(
+            "set_post_id_on_connection skipped post_id=%s err=%s",
+            normalized_post_id,
+            e,
+        )
+
+
 def reset_pg_connection_session_state(conn) -> None:
     """Réinitialise le cache session (appelé au retour connexion → pool)."""
-    for attr in ("_uwi_current_tenant_id", "_uwi_bypass_rls"):
+    for attr in ("_uwi_current_tenant_id", "_uwi_current_post_id", "_uwi_bypass_rls"):
         try:
             delattr(conn, attr)
         except AttributeError:

@@ -27,7 +27,7 @@ import backend.config as config  # Import du MODULE (pas from import)
 from backend.db import init_db, list_free_slots, count_free_slots
 from backend.deps import require_tenant_web, TenantIdWeb
 # Nouvelle architecture multi-canal
-from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien, public_pages, public_questionnaire
+from backend.routes import voice, whatsapp, bland, reports, admin, auth, tenant, client, stripe_webhook, pre_onboarding, checkout_embedded, public_praticien, public_pages, public_questionnaire, consular
 from backend.routes import public_appointment_actions, patient_context, public_questionnaire_v2
 from backend.timing_log import install_api_timing
 
@@ -430,6 +430,7 @@ if (os.environ.get("ADMIN_DEMO_MODE") or "").strip().lower() in ("true", "1", "y
 app.include_router(admin.router)      # /api/public/onboarding, /api/admin/*
 app.include_router(auth.router)       # /api/auth/*
 app.include_router(tenant.router)     # /api/tenant/*
+app.include_router(consular.router)   # /api/post/*
 app.include_router(client.router)     # /api/client/*
 app.include_router(stripe_webhook.router)  # POST /api/stripe/webhook
 app.include_router(pre_onboarding.router)  # POST /api/pre-onboarding/commit
